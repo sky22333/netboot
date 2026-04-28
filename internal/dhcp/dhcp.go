@@ -731,9 +731,15 @@ func parseHex(v string) uint16 {
 	return out
 }
 
-func DetectServers(ctx context.Context, listenIP string, timeout time.Duration) ([]string, error) {
+func DetectServers(ctx context.Context, listenIP string, timeout time.Duration, excludeIPs ...string) ([]string, error) {
 	if listenIP == "" || listenIP == "0.0.0.0" {
 		listenIP = "0.0.0.0"
+	}
+	excluded := map[string]bool{}
+	for _, ip := range excludeIPs {
+		if parsed := net.ParseIP(ip).To4(); parsed != nil {
+			excluded[parsed.String()] = true
+		}
 	}
 	addr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(listenIP, "68"))
 	if err != nil {
@@ -775,7 +781,10 @@ func DetectServers(ctx context.Context, listenIP string, timeout time.Duration) 
 		opts := parseOptions(buf[240:n])
 		if v := opts[53]; len(v) > 0 && v[0] == 2 {
 			if sid := opts[54]; len(sid) == 4 {
-				found[net.IP(sid).String()] = true
+				ip := net.IP(sid).String()
+				if !excluded[ip] {
+					found[ip] = true
+				}
 			}
 		}
 	}

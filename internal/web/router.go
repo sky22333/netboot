@@ -162,16 +162,17 @@ func (h *Handler) status(c *gin.Context) {
 func (h *Handler) diagnostics(c *gin.Context) {
 	boot := h.app.BootConfig()
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	dhcpServers, _ := dhcp.DetectServers(c.Request.Context(), settings.Server.ListenIP, 1500*time.Millisecond)
+	dhcpServers, _ := dhcp.DetectServers(c.Request.Context(), settings.Server.ListenIP, 1500*time.Millisecond, settings.Server.AdvertiseIP)
 	OK(c, gin.H{
-		"data_dir":     boot.Data.Dir,
-		"db":           boot.Database.Path,
-		"admin_addr":   boot.Admin.AdminAddr,
-		"is_admin":     platform.IsAdminLike(),
-		"interfaces":   platform.Interfaces(),
-		"dhcp_servers": dhcpServers,
-		"events":       h.app.EventHub().Recent(),
-		"suggestions":  []string{"监听 67/69/80 等低端口通常需要管理员/root 权限", "完整 DHCP 建议只在隔离网络中启用", "首次 PXE 测试建议先使用 ProxyDHCP"},
+		"data_dir":              boot.Data.Dir,
+		"db":                    boot.Database.Path,
+		"admin_addr":            boot.Admin.AdminAddr,
+		"is_admin":              platform.IsAdminLike(),
+		"interfaces":            platform.Interfaces(),
+		"dhcp_servers":          dhcpServers,
+		"dhcp_probe_exclusions": []string{settings.Server.AdvertiseIP},
+		"dhcp_probe_note":       "DHCP 探测会排除本程序通告 IP，仅作为辅助诊断；部分热点、桥接网卡、防火墙或交换机可能拦截探测包。",
+		"suggestions":           []string{"监听 67/69/80 等低端口通常需要管理员/root 权限", "完整 DHCP 建议只在隔离网络中启用", "首次 PXE 测试建议先使用 ProxyDHCP"},
 	})
 }
 

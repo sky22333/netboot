@@ -145,7 +145,7 @@ func (a *App) StartServices(ctx context.Context) error {
 	}
 	if settings.DHCP.Enabled {
 		if settings.DHCP.Mode == "dhcp" && settings.DHCP.DetectConflicts {
-			if servers, err := dhcp.DetectServers(ctx, settings.Server.ListenIP, 2*time.Second); err == nil && len(servers) > 0 {
+			if servers, err := dhcp.DetectServers(ctx, settings.Server.ListenIP, 2*time.Second, settings.Server.AdvertiseIP); err == nil && len(servers) > 0 {
 				a.Events.Publish("warning", "dhcp", "检测到局域网内已有 DHCP 服务，完整 DHCP 模式可能发生冲突")
 			}
 		}
