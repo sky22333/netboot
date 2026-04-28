@@ -4,13 +4,11 @@
 
 `pxe` 是一个使用 Go 后端 + Vue 3 Web UI 实现的跨平台 PXE 网络启动管理服务。它面向 Windows、Linux、macOS、OpenWrt、Armbian 等环境，目标是以单二进制方式提供 DHCP/ProxyDHCP、TFTP、HTTP Boot、动态 iPXE 菜单、客户端管理、文件管理和 netboot.xyz 辅助下载能力。
 
-项目主体位于 `pxe/`。根目录中的旧 Python 版文件仅作为历史参考，不参与 Go 版本构建、测试和发布。
-
 ## 当前技术栈
 
 后端：
 
-- Go 1.22+。
+- Go 1.25+。
 - Gin 管理 API 和静态前端托管。
 - `log/slog` 结构化日志。
 - 纯 Go SQLite：`modernc.org/sqlite`，方便 CGO 关闭和交叉编译。
@@ -198,8 +196,7 @@ GitHub Actions：
 
 - `.github/workflows/release.yml` 手动触发。
 - 构建 Windows、Linux、macOS 多平台二进制。
-- 上传 zip/tar.gz 和 SHA256。
-- Dependabot 每周检查 Go、npm 和 Actions 依赖。
+- 上传 zip/tar.gz
 
 ## 离线自托管
 
