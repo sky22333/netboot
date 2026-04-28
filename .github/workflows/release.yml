@@ -1,0 +1,179 @@
+name: 手动构建与发布
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号，例如 v1.0.0"
+        required: true
+        type: string
+      prerelease:
+        description: "是否标记为预发布"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  checks:
+    name: 质量检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v6
+
+      - name: 设置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.sum
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: latest
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装前端依赖
+        run: npm ci
+        working-directory: web
+
+      - name: 前端类型检查与构建
+        run: |
+          npm run typecheck
+          npm run build
+        working-directory: web
+
+      - name: 同步前端嵌入资源
+        run: |
+          rm -rf internal/web/dist
+          mkdir -p internal/web/dist
+          cp -R web/dist/. internal/web/dist/
+
+      - name: Go 测试与静态检查
+        run: |
+          go test ./...
+          go vet ./...
+
+  build:
+    name: 构建 ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+            suffix: ""
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+            suffix: ""
+          - goos: linux
+            goarch: amd64
+            ext: ""
+            suffix: ""
+          - goos: linux
+            goarch: arm64
+            ext: ""
+            suffix: ""
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            ext: ""
+            suffix: "-armv7"
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+            suffix: ""
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+            suffix: ""
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v6
+
+      - name: 设置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.sum
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: latest
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装并构建前端
+        run: |
+          npm ci
+          npm run build
+        working-directory: web
+
+      - name: 同步前端嵌入资源
+        run: |
+          rm -rf internal/web/dist
+          mkdir -p internal/web/dist
+          cp -R web/dist/. internal/web/dist/
+
+      - name: 编译二进制
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p release/package
+          BIN="release/package/pxe${{ matrix.ext }}"
+          go build -trimpath -ldflags="-s -w" -o "$BIN" ./cmd/pxe
+          cp README.md release/package/README.md
+          cp LICENSE release/package/LICENSE 2>/dev/null || true
+
+      - name: 打包
+        shell: bash
+        run: |
+          NAME="pxe-${{ github.event.inputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
+          mkdir -p release/out
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            (cd release/package && zip -9 -r "../out/${NAME}.zip" .)
+          else
+            (cd release/package && tar -czf "../out/${NAME}.tar.gz" .)
+          fi
+          (cd release/out && sha256sum * > "${NAME}.sha256")
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v6
+        with:
+          name: pxe-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+          path: release/out/*
+          if-no-files-found: error
+
+  release:
+    name: 创建 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载所有产物
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 创建发布
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: pxe ${{ github.event.inputs.version }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          generate_release_notes: true
+          files: artifacts/*

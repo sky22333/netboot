@@ -1,0 +1,29 @@
+{
+  "name": "pxe-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "vue-tsc --noEmit",
+    "test": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "lucide-vue-next": "^0.468.0",
+    "pinia": "^2.3.0",
+    "vite": "^6.0.5",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vue-tsc": "^2.2.0"
+  }
+}
+

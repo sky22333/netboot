@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-neutral-50 text-neutral-950 antialiased;
+}
+
+.card {
+  @apply rounded-lg border border-neutral-200 bg-white shadow-sm transition-shadow duration-200;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.btn-primary {
+  @apply border-neutral-900 bg-neutral-950 text-white hover:bg-neutral-800;
+}
+
+.btn-danger {
+  @apply border-red-200 bg-red-50 text-red-700 hover:bg-red-100;
+}
+
+.input {
+  @apply h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-neutral-900/10;
+}
+
+.label {
+  @apply text-sm font-medium text-neutral-700;
+}
+
+.alert {
+  @apply rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900;
+}
+
+.field-hint {
+  @apply text-xs text-neutral-500;
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.page-enter-from,
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
