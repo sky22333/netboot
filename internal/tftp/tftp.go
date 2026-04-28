@@ -170,8 +170,8 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 	}
 	if len(options) > 0 {
 		if !sendOACK(conn, client, options, blockSize, size) {
-			events.Publish("warning", "tftp", "客户端未确认 OACK，传输取消: "+name)
-			return
+			blockSize = 512
+			events.Publish("warning", "tftp", "客户端未确认 OACK，回退到标准 TFTP 模式: "+name)
 		}
 	}
 	block := uint16(1)

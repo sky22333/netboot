@@ -22,6 +22,11 @@
         <select v-model="config.dhcp.mode" class="input w-full"><option value="proxy">ProxyDHCP</option><option value="dhcp">完整 DHCP</option></select>
         <div v-if="config.dhcp.mode === 'proxy'" class="alert">ProxyDHCP 不分配 IP，客户端 IP、网关和 DNS 仍由现有路由器/DHCP 服务提供。</div>
         <div v-else class="alert">完整 DHCP 会向局域网分配 IP，启动前请确认没有路由器或其他 DHCP 服务在同网段工作。</div>
+        <label class="label">普通 DHCP 客户端</label>
+        <select v-model="config.dhcp.non_pxe_action" class="input w-full">
+          <option value="network_only">仅分配网络参数</option>
+          <option value="ignore">忽略普通客户端</option>
+        </select>
         <input v-model="config.dhcp.subnet_mask" class="input w-full" placeholder="子网掩码" />
         <p v-if="config.dhcp.mode === 'proxy'" class="text-xs text-neutral-500">子网掩码用于计算定向广播地址，例如通告 IP 为 10.43.180.193 且掩码为 255.255.255.0 时，会自动计算 10.43.180.255。</p>
         <template v-if="config.dhcp.mode === 'dhcp'">

@@ -41,12 +41,6 @@ jobs:
           npm run build
         working-directory: web
 
-      - name: 同步前端嵌入资源
-        run: |
-          rm -rf internal/web/dist
-          mkdir -p internal/web/dist
-          cp -R web/dist/. internal/web/dist/
-
       - name: Go 测试与静态检查
         run: |
           go test ./...
@@ -109,12 +103,6 @@ jobs:
           npm ci
           npm run build
         working-directory: web
-
-      - name: 同步前端嵌入资源
-        run: |
-          rm -rf internal/web/dist
-          mkdir -p internal/web/dist
-          cp -R web/dist/. internal/web/dist/
 
       - name: 编译二进制
         env:

@@ -22,6 +22,7 @@ type ServerSettings struct {
 type DHCPSettings struct {
 	Enabled          bool     `json:"enabled"`
 	Mode             string   `json:"mode"`
+	NonPXEAction     string   `json:"non_pxe_action"`
 	PoolStart        string   `json:"pool_start"`
 	PoolEnd          string   `json:"pool_end"`
 	SubnetMask       string   `json:"subnet_mask"`

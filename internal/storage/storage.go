@@ -90,11 +90,11 @@ func (s *Store) DefaultSettings() ServiceSettings {
 	prefix := ipv4Prefix(advertiseIP)
 	return ServiceSettings{
 		Server:     ServerSettings{ListenIP: "0.0.0.0", AdvertiseIP: advertiseIP},
-		DHCP:       DHCPSettings{Enabled: true, Mode: "proxy", PoolStart: prefix + ".200", PoolEnd: prefix + ".250", SubnetMask: "255.255.255.0", Router: prefix + ".1", DNS: []string{prefix + ".1"}, LeaseTimeSeconds: 86400, DetectConflicts: true},
+		DHCP:       DHCPSettings{Enabled: true, Mode: "proxy", NonPXEAction: "network_only", PoolStart: prefix + ".200", PoolEnd: prefix + ".250", SubnetMask: "255.255.255.0", Router: prefix + ".1", DNS: []string{prefix + ".1"}, LeaseTimeSeconds: 86400, DetectConflicts: true},
 		TFTP:       TFTPSettings{Enabled: true, Root: filepath.Join(s.dataDir, "boot", "tftp"), AllowUpload: false, MaxTransfers: 64, BlockSizeMax: 1428, RetryCount: 5, TimeoutSeconds: 3, MaxUploadBytes: 256 * 1024 * 1024},
 		HTTPBoot:   HTTPBootSettings{Enabled: true, Addr: ":80", Root: filepath.Join(s.dataDir, "boot", "http"), DirectoryListing: true, RangeRequests: true},
 		SMB:        SMBSettings{Enabled: false, Root: filepath.Join(s.dataDir, "smb"), ShareName: "pxe", Permissions: "read"},
-		BootFiles:  BootFilesSettings{BIOS: "ipxe.bios", UEFI32: "ipxe32.efi", UEFI64: "ipxe.efi", IPXE: "ipxeboot.txt"},
+		BootFiles:  BootFilesSettings{BIOS: "ipxe.bios", UEFI32: "ipxe32.efi", UEFI64: "ipxe.efi", IPXE: "boot.ipxe"},
 		NetbootXYZ: NetbootXYZSettings{Enabled: true, DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz.efi", "netboot.xyz-undionly.kpxe"}},
 		Torrent:    TorrentSettings{Enabled: false, Addr: ":6969"},
 		Security:   SecuritySettings{AdminAuthEnabled: true, AllowRemoteAdmin: false},
@@ -161,6 +161,9 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	if settings.DHCP.Mode == "" {
 		settings.DHCP.Mode = defaults.DHCP.Mode
 	}
+	if settings.DHCP.NonPXEAction == "" {
+		settings.DHCP.NonPXEAction = defaults.DHCP.NonPXEAction
+	}
 	if settings.DHCP.PoolStart == "" {
 		settings.DHCP.PoolStart = defaults.DHCP.PoolStart
 	}
@@ -218,6 +221,9 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	if settings.Torrent.Addr == "" {
 		settings.Torrent.Addr = defaults.Torrent.Addr
 	}
+	if settings.BootFiles.IPXE == "" || settings.BootFiles.IPXE == "ipxeboot.txt" {
+		settings.BootFiles.IPXE = defaults.BootFiles.IPXE
+	}
 }
 
 func (s *Store) SaveSettings(ctx context.Context, settings ServiceSettings) error {
@@ -241,6 +247,9 @@ func ValidateSettings(settings ServiceSettings) error {
 	}
 	if settings.DHCP.Mode != "proxy" && settings.DHCP.Mode != "dhcp" {
 		return fmt.Errorf("dhcp.mode 必须是 proxy 或 dhcp")
+	}
+	if settings.DHCP.NonPXEAction != "" && settings.DHCP.NonPXEAction != "ignore" && settings.DHCP.NonPXEAction != "network_only" {
+		return fmt.Errorf("dhcp.non_pxe_action 必须是 ignore 或 network_only")
 	}
 	if settings.TFTP.MaxTransfers <= 0 {
 		return fmt.Errorf("tftp.max_transfers 必须大于 0")
