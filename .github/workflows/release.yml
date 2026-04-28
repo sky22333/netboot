@@ -152,7 +152,7 @@ jobs:
           (cd release/out && sha256sum * > "${NAME}.sha256")
 
       - name: 上传构建产物
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: pxe-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
           path: release/out/*
