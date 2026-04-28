@@ -1,37 +1,18 @@
-# pxe
+## PXE
+> 基于 Go + Vue 3 构建的**跨平台** PXE 网络启动管理服务，轻松实现多系统环境下的开箱即用。
 
-Go + Vue 3 的跨平台 PXE 网络启动管理服务。
+## ✨ 功能特点
 
-## 当前实现
-
-- 管理 Web UI：中文界面、登录认证、移动端抽屉导航、实时日志。
-- 服务控制：启动、停止、重启 DHCP/ProxyDHCP、TFTP、HTTP Boot、SMB、Torrent。
-- DHCP：ProxyDHCP 67/4011、完整 DHCP 地址池、租约、静态绑定、冲突探测。
-- 启动文件选择：BIOS/UEFI/iPXE 自动识别，netboot.xyz 优先，可回退到自定义启动文件。
-- TFTP：下载、可选上传、blksize/tsize、重试、并发限制、`netboot/...` 虚拟路径。
-- HTTP Boot：文件服务、HEAD、Range、缓存校验头、`/dynamic.ipxe`、`/netboot/...` 虚拟路径。
-- 文件管理：浏览、上传、创建目录、重命名、删除、生成 torrent。
-- netboot.xyz：从官方地址下载常用启动文件，显示本地存在状态和 SHA256。
-- 数据存储：纯 Go SQLite，默认 `data/pxe.db`。
-
-## 开发构建
-
-```powershell
-npm ci --prefix web
-npm run build --prefix web
-go test ./...
-go vet ./...
-go build -o dist\pxe.exe .\cmd\pxe
-```
-
-Linux/macOS：
-
-```bash
-(cd web && npm ci && npm run build)
-go test ./...
-go vet ./...
-go build -o dist/pxe ./cmd/pxe
-```
+* 🖥️ **全平台支持**：采用 Go 语言开发，原生跨平台（Windows / Linux / macOS），无需繁琐的环境配置。
+* 📱 **Web 可视化管理**：纯中文响应式界面，完美适配手机与电脑，支持登录认证与实时日志查看。
+* ⚙️ **服务一键管控**：在 Web 端即可启动、停止或重启 DHCP (含 ProxyDHCP)、TFTP、HTTP Boot、SMB 和 Torrent 服务。
+* 📡 **智能网络引导**：
+    * **完整 DHCP**：支持标准 DHCP 地址分配及 ProxyDHCP 模式（不影响现有路由）。
+    * **自动适配**：智能识别终端架构（BIOS / UEFI / iPXE）并下发引导文件。
+    * **内置 netboot.xyz**：支持官方源拉取，同时兼容自定义启动文件。
+* ⚡ **高效协议传输**：提供稳定且带重试机制的 TFTP，以及支持缓存和虚拟路径的 HTTP Boot 服务。
+* 🗂️ **在线文件管理**：内置文件浏览器，支持在线上传、多级目录管理。
+* 💾 **轻量级存储**：底层使用纯 Go SQLite（默认 `data/pxe.db`），零外部数据库依赖。
 
 ## 运行
 
