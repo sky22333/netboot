@@ -16,11 +16,13 @@
 
 ## 运行
 
+[Releases](https://github.com/sky22333/netboot/releases)页面下载构建好的二进制文件
+
 ```powershell
 .\dist\pxe.exe
 ```
 
-不带参数启动时，程序会切换到可执行文件所在目录，并在当前目录创建 `data/`。常用参数：
+不带参数启动时，程序会切换到可执行文件所在目录，并在当前目录创建 `data/`。常用参数（可选项）：
 
 ```text
 --config     指定 pxe.toml
