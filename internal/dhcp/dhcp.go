@@ -735,12 +735,7 @@ func DetectServers(ctx context.Context, listenIP string, timeout time.Duration, 
 	if listenIP == "" || listenIP == "0.0.0.0" {
 		listenIP = "0.0.0.0"
 	}
-	excluded := map[string]bool{}
-	for _, ip := range excludeIPs {
-		if parsed := net.ParseIP(ip).To4(); parsed != nil {
-			excluded[parsed.String()] = true
-		}
-	}
+	excluded := excludedIPs(excludeIPs)
 	addr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(listenIP, "68"))
 	if err != nil {
 		return nil, err
@@ -751,6 +746,99 @@ func DetectServers(ctx context.Context, listenIP string, timeout time.Duration, 
 	}
 	defer conn.Close()
 	xid := []byte{0x50, 0x58, 0x45, 0x01}
+	pkt := dhcpDiscoverPacket(xid)
+	dst, _ := net.ResolveUDPAddr("udp4", "255.255.255.255:67")
+	_, _ = conn.WriteToUDP(pkt, dst)
+	found := readDHCPServers(ctx, conn, timeout, xid, excluded)
+	return keys(found), nil
+}
+
+type InterfaceProbe struct {
+	Interface string   `json:"interface"`
+	IP        string   `json:"ip"`
+	Broadcast string   `json:"broadcast"`
+	Servers   []string `json:"servers"`
+	Error     string   `json:"error,omitempty"`
+}
+
+func DetectServersByInterface(ctx context.Context, listenIP string, timeout time.Duration, excludeIPs ...string) ([]InterfaceProbe, error) {
+	targets, err := dhcpProbeTargets(listenIP)
+	if err != nil {
+		return nil, err
+	}
+	excluded := excludedIPs(excludeIPs)
+	results := make([]InterfaceProbe, 0, len(targets))
+	for i, target := range targets {
+		xid := []byte{0x50, 0x58, 0x45, byte(i + 1)}
+		item := InterfaceProbe{Interface: target.name, IP: target.ip.String(), Broadcast: target.broadcast.String()}
+		servers, err := detectServersOnIP(ctx, target.ip.String(), target.broadcast.String(), timeout, xid, excluded)
+		if err != nil {
+			item.Error = err.Error()
+		} else {
+			item.Servers = keys(servers)
+		}
+		results = append(results, item)
+	}
+	return results, nil
+}
+
+type dhcpProbeTarget struct {
+	name      string
+	ip        net.IP
+	broadcast net.IP
+}
+
+func dhcpProbeTargets(listenIP string) ([]dhcpProbeTarget, error) {
+	filterIP := net.ParseIP(listenIP).To4()
+	if listenIP == "" || listenIP == "0.0.0.0" {
+		filterIP = nil
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var targets []dhcpProbeTarget
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, ipNet, err := net.ParseCIDR(addr.String())
+			if err != nil || ip.To4() == nil || ipNet == nil {
+				continue
+			}
+			ip = ip.To4()
+			if filterIP != nil && !ip.Equal(filterIP) {
+				continue
+			}
+			targets = append(targets, dhcpProbeTarget{name: iface.Name, ip: ip, broadcast: probeBroadcast(ip, ipNet.Mask)})
+		}
+	}
+	return targets, nil
+}
+
+func detectServersOnIP(ctx context.Context, listenIP, broadcast string, timeout time.Duration, xid []byte, excluded map[string]bool) (map[string]bool, error) {
+	addr, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(listenIP, "68"))
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.ListenUDP("udp4", addr)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	pkt := dhcpDiscoverPacket(xid)
+	if dst, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(broadcast, "67")); err == nil {
+		_, _ = conn.WriteToUDP(pkt, dst)
+	}
+	if dst, err := net.ResolveUDPAddr("udp4", "255.255.255.255:67"); err == nil {
+		_, _ = conn.WriteToUDP(pkt, dst)
+	}
+	return readDHCPServers(ctx, conn, timeout, xid, excluded), nil
+}
+
+func dhcpDiscoverPacket(xid []byte) []byte {
 	pkt := make([]byte, 0, 300)
 	pkt = append(pkt, 1, 1, 6, 0)
 	pkt = append(pkt, xid...)
@@ -762,20 +850,25 @@ func DetectServers(ctx context.Context, listenIP string, timeout time.Duration, 
 	pkt = opt(pkt, 53, []byte{1})
 	pkt = opt(pkt, 55, []byte{1, 3, 6, 12, 15, 54})
 	pkt = append(pkt, 255)
-	dst, _ := net.ResolveUDPAddr("udp4", "255.255.255.255:67")
-	_, _ = conn.WriteToUDP(pkt, dst)
+	return pkt
+}
+
+func readDHCPServers(ctx context.Context, conn *net.UDPConn, timeout time.Duration, xid []byte, excluded map[string]bool) map[string]bool {
 	deadline := time.Now().Add(timeout)
 	found := map[string]bool{}
 	buf := make([]byte, 1500)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			return keys(found), ctx.Err()
+			return found
 		default:
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil || n < 240 {
+			continue
+		}
+		if len(xid) == 4 && string(buf[4:8]) != string(xid) {
 			continue
 		}
 		opts := parseOptions(buf[240:n])
@@ -788,7 +881,26 @@ func DetectServers(ctx context.Context, listenIP string, timeout time.Duration, 
 			}
 		}
 	}
-	return keys(found), nil
+	return found
+}
+
+func excludedIPs(excludeIPs []string) map[string]bool {
+	excluded := map[string]bool{}
+	for _, ip := range excludeIPs {
+		if parsed := net.ParseIP(ip).To4(); parsed != nil {
+			excluded[parsed.String()] = true
+		}
+	}
+	return excluded
+}
+
+func probeBroadcast(ip net.IP, mask net.IPMask) net.IP {
+	ip = ip.To4()
+	out := make(net.IP, 4)
+	for i := 0; i < 4; i++ {
+		out[i] = ip[i] | ^mask[i]
+	}
+	return out
 }
 
 func keys(m map[string]bool) []string {

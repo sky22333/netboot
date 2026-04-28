@@ -64,6 +64,7 @@ func NewRouter(app Backend) http.Handler {
 	protected.Use(h.requireAuth)
 	protected.GET("/status", h.status)
 	protected.GET("/diagnostics", h.diagnostics)
+	protected.GET("/diagnostics/dhcp", h.dhcpDiagnostics)
 	protected.GET("/config", h.getConfig)
 	protected.PUT("/config", h.saveConfig)
 	protected.POST("/config/validate", h.validateConfig)
@@ -175,29 +176,49 @@ func (h *Handler) status(c *gin.Context) {
 
 func (h *Handler) diagnostics(c *gin.Context) {
 	boot := h.app.BootConfig()
+	permission := platform.Permission()
+	OK(c, gin.H{
+		"data_dir":    boot.Data.Dir,
+		"db":          boot.Database.Path,
+		"admin_addr":  boot.Admin.AdminAddr,
+		"is_admin":    permission.AdminLike,
+		"permission":  permission,
+		"interfaces":  platform.Interfaces(),
+		"suggestions": []string{"若客户端无法获取启动文件，请确认程序已被系统防火墙放行，并且监听 IP、通告 IP 与客户端处于可达网络。"},
+	})
+}
+
+func (h *Handler) dhcpDiagnostics(c *gin.Context) {
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
 	exclusions := []string{}
 	if settings.DHCP.Enabled && settings.DHCP.Mode == "dhcp" && settings.Server.AdvertiseIP != "" {
 		exclusions = append(exclusions, settings.Server.AdvertiseIP)
 	}
-	dhcpServers, _ := dhcp.DetectServers(c.Request.Context(), settings.Server.ListenIP, 1500*time.Millisecond, exclusions...)
-	permission := platform.Permission()
-	note := "DHCP 探测仅作为辅助诊断；部分热点、桥接网卡、防火墙或交换机可能拦截探测包。"
+	probes, _ := dhcp.DetectServersByInterface(c.Request.Context(), settings.Server.ListenIP, 3*time.Second, exclusions...)
+	note := "DHCP 探测会按可用 IPv4 网卡逐个发送短时探测包，仅作为辅助诊断；部分热点、桥接网卡、防火墙或交换机可能拦截探测包。"
 	if len(exclusions) > 0 {
 		note = "完整 DHCP 已启用，探测结果已排除本程序通告 IP；其余结果仅作为辅助诊断。"
 	}
 	OK(c, gin.H{
-		"data_dir":              boot.Data.Dir,
-		"db":                    boot.Database.Path,
-		"admin_addr":            boot.Admin.AdminAddr,
-		"is_admin":              permission.AdminLike,
-		"permission":            permission,
-		"interfaces":            platform.Interfaces(),
-		"dhcp_servers":          dhcpServers,
+		"dhcp_servers":          uniqueProbeServers(probes),
+		"dhcp_interface_probes": probes,
 		"dhcp_probe_exclusions": exclusions,
 		"dhcp_probe_note":       note,
-		"suggestions":           []string{"若客户端无法获取启动文件，请确认程序已被系统防火墙放行，并且监听 IP、通告 IP 与客户端处于可达网络。"},
 	})
+}
+
+func uniqueProbeServers(probes []dhcp.InterfaceProbe) []string {
+	seen := map[string]bool{}
+	for _, probe := range probes {
+		for _, server := range probe.Servers {
+			seen[server] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for server := range seen {
+		out = append(out, server)
+	}
+	return out
 }
 
 func (h *Handler) getConfig(c *gin.Context) {

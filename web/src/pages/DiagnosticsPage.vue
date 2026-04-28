@@ -8,7 +8,8 @@
         </div>
         <div class="flex gap-2">
           <RouterLink class="btn" to="/logs">查看日志</RouterLink>
-          <button class="btn" :disabled="loading" @click="load">{{ loading ? '诊断中...' : '重新诊断' }}</button>
+          <button class="btn" :disabled="loading" @click="load">{{ loading ? '刷新中...' : '刷新基础信息' }}</button>
+          <button class="btn btn-primary" :disabled="probing" @click="probeDHCP">{{ probing ? '探测中...' : 'DHCP 探测' }}</button>
         </div>
       </div>
       <p v-if="error" class="mt-3 text-sm text-red-600">{{ error }}</p>
@@ -29,8 +30,8 @@
       </div>
       <div class="card p-4">
         <div class="text-sm text-neutral-500">DHCP 冲突探测</div>
-        <div class="mt-2 font-semibold" :class="dhcpServers.length ? 'text-amber-700' : 'text-green-700'">
-          {{ dhcpServers.length ? `发现 ${dhcpServers.length} 个 DHCP 服务` : '未发现额外 DHCP 服务' }}
+        <div class="mt-2 font-semibold" :class="dhcpStatusClass">
+          {{ dhcpStatusText }}
         </div>
         <div v-if="exclusions.length" class="mt-1 text-xs text-neutral-500">已排除本程序通告 IP：{{ exclusions.join(', ') }}</div>
       </div>
@@ -68,16 +69,27 @@
       </div>
     </section>
 
-    <section v-if="dhcpServers.length" class="card p-5">
-      <h2 class="font-semibold">探测到的 DHCP 服务</h2>
-      <p class="mt-1 text-xs text-neutral-500">{{ data?.dhcp_probe_note }}</p>
-      <div class="mt-3 flex flex-wrap gap-2">
-        <span v-for="server in dhcpServers" :key="server" class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-800">{{ server }}</span>
+    <section class="card p-5">
+      <h2 class="font-semibold">DHCP 网卡探测结果</h2>
+      <p class="mt-1 text-xs text-neutral-500">{{ dhcp.dhcp_probe_note }}</p>
+      <div class="mt-3 divide-y divide-neutral-100 rounded-md border border-neutral-200">
+        <div v-for="probe in dhcpProbes" :key="`${probe.interface}-${probe.ip}`" class="grid gap-3 p-3 text-sm lg:grid-cols-[18rem_minmax(0,1fr)]">
+          <div class="min-w-0">
+            <div class="truncate font-medium" :title="probe.interface">{{ probe.interface }}</div>
+            <div class="mt-1 text-xs text-neutral-500">探测地址：{{ probe.ip }} → {{ probe.broadcast }}</div>
+          </div>
+          <div class="min-w-0">
+            <div v-if="probe.servers.length" class="flex flex-wrap gap-2">
+              <span v-for="server in probe.servers" :key="server" class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-800">{{ server }}</span>
+            </div>
+            <div v-else-if="probe.error" class="break-words text-xs text-amber-700">{{ probe.error }}</div>
+            <div v-else class="text-xs text-neutral-500">未收到 DHCP Offer。</div>
+          </div>
+        </div>
+        <div v-if="dhcpProbeState === 'idle'" class="p-4 text-sm text-neutral-500">尚未执行 DHCP 探测。点击右上角“DHCP 探测”后才会发送短时探测包。</div>
+        <div v-else-if="probing" class="p-4 text-sm text-neutral-500">正在逐个网卡探测 DHCP 服务...</div>
+        <div v-else-if="dhcpProbes.length === 0" class="p-4 text-sm text-neutral-500">未找到可探测的 IPv4 网卡。</div>
       </div>
-    </section>
-    <section v-else class="card p-5">
-      <h2 class="font-semibold">DHCP 探测说明</h2>
-      <p class="mt-2 text-sm text-neutral-600">{{ data?.dhcp_probe_note }}</p>
     </section>
 
     <section class="card p-5">
@@ -108,10 +120,14 @@ type Diagnostics = {
   is_admin: boolean
   permission: Permission
   interfaces: Array<{ name: string; flags: string; ips: string[] }>
+  suggestions: string[]
+}
+
+type DHCPDiagnostics = {
   dhcp_servers: string[]
+  dhcp_interface_probes: Array<{ interface: string; ip: string; broadcast: string; servers: string[]; error?: string }>
   dhcp_probe_exclusions: string[]
   dhcp_probe_note: string
-  suggestions: string[]
 }
 
 function emptyDiagnostics(): Diagnostics {
@@ -122,21 +138,40 @@ function emptyDiagnostics(): Diagnostics {
     is_admin: false,
     permission: { admin_like: false, status: 'unknown', label: '等待诊断', detail: '点击重新诊断后会显示当前权限状态。' },
     interfaces: [],
-    dhcp_servers: [],
-    dhcp_probe_exclusions: [],
-    dhcp_probe_note: '等待诊断结果。',
     suggestions: []
   }
 }
 
 const data = ref<Diagnostics>(emptyDiagnostics())
+const dhcp = ref<DHCPDiagnostics>(emptyDHCPDiagnostics())
 const loading = ref(false)
+const probing = ref(false)
 const error = ref('')
+const dhcpProbeState = ref<'idle' | 'done'>('idle')
 const interfaces = computed(() => data.value.interfaces)
-const dhcpServers = computed(() => data.value.dhcp_servers)
+const dhcpServers = computed(() => dhcp.value.dhcp_servers)
+const dhcpProbes = computed(() => dhcp.value.dhcp_interface_probes)
 const suggestions = computed(() => data.value.suggestions)
-const exclusions = computed(() => data.value.dhcp_probe_exclusions)
+const exclusions = computed(() => dhcp.value.dhcp_probe_exclusions)
 const permission = computed(() => data.value.permission)
+const dhcpStatusText = computed(() => {
+  if (probing.value) return '正在探测...'
+  if (dhcpProbeState.value === 'idle') return '尚未执行探测'
+  return dhcpServers.value.length ? `发现 ${dhcpServers.value.length} 个 DHCP 服务` : '未发现额外 DHCP 服务'
+})
+const dhcpStatusClass = computed(() => {
+  if (probing.value || dhcpProbeState.value === 'idle') return 'text-neutral-600'
+  return dhcpServers.value.length ? 'text-amber-700' : 'text-green-700'
+})
+
+function emptyDHCPDiagnostics(): DHCPDiagnostics {
+  return {
+    dhcp_servers: [],
+    dhcp_interface_probes: [],
+    dhcp_probe_exclusions: [],
+    dhcp_probe_note: 'DHCP 探测需要手动触发，不会在进入页面时自动发送网络探测包。'
+  }
+}
 
 function flagList(flags: string) {
   return String(flags || '').split('|').filter(Boolean)
@@ -152,6 +187,21 @@ async function load() {
     error.value = e instanceof Error ? e.message : '诊断失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function probeDHCP() {
+  if (probing.value) return
+  probing.value = true
+  error.value = ''
+  dhcp.value = emptyDHCPDiagnostics()
+  try {
+    dhcp.value = await api<DHCPDiagnostics>('/diagnostics/dhcp')
+    dhcpProbeState.value = 'done'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'DHCP 探测失败'
+  } finally {
+    probing.value = false
   }
 }
 onMounted(load)
