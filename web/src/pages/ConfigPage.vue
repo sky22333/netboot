@@ -81,6 +81,7 @@ const dnsText = computed({
 })
 async function load() { config.value = await api('/config') }
 async function save() {
+  if (saving.value) return
   if (config.value?.dhcp?.enabled && config.value?.dhcp?.mode === 'dhcp') {
     const ok = window.confirm('完整 DHCP 会向局域网分配 IP。请确认当前网络没有其他 DHCP 服务，是否继续保存？')
     if (!ok) return

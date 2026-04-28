@@ -12,6 +12,13 @@ type NetworkInterface struct {
 	IPs   []string `json:"ips"`
 }
 
+type PermissionInfo struct {
+	AdminLike bool   `json:"admin_like"`
+	Status    string `json:"status"`
+	Label     string `json:"label"`
+	Detail    string `json:"detail"`
+}
+
 func Interfaces() []NetworkInterface {
 	ifaces, _ := net.Interfaces()
 	out := make([]NetworkInterface, 0, len(ifaces))
@@ -27,8 +34,30 @@ func Interfaces() []NetworkInterface {
 }
 
 func IsAdminLike() bool {
+	return Permission().AdminLike
+}
+
+func Permission() PermissionInfo {
 	if runtime.GOOS == "windows" {
-		return true
+		return PermissionInfo{
+			AdminLike: true,
+			Status:    "ok",
+			Label:     "Windows 权限正常",
+			Detail:    "Windows 通常不限制低端口绑定；若无法响应客户端，请检查防火墙、网卡绑定和同网段配置。",
+		}
 	}
-	return os.Geteuid() == 0
+	if os.Geteuid() == 0 {
+		return PermissionInfo{
+			AdminLike: true,
+			Status:    "ok",
+			Label:     "具备低端口权限",
+			Detail:    "当前进程具备绑定 67/69/80 等低端口所需权限。",
+		}
+	}
+	return PermissionInfo{
+		AdminLike: false,
+		Status:    "warning",
+		Label:     "可能缺少低端口权限",
+		Detail:    "Linux/macOS 绑定 1024 以下端口通常需要 root、CAP_NET_BIND_SERVICE 或端口转发规则。",
+	}
 }

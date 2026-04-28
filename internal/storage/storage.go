@@ -483,9 +483,22 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) SetUserEnabled(ctx context.Context, id int64, enabled bool) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET enabled=?,updated_at=? WHERE id=?`, boolInt(enabled), Now(), id)
-	return err
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	var firstID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM users ORDER BY id LIMIT 1`).Scan(&firstID); err != nil {
+		return err
+	}
+	if id == firstID {
+		return fmt.Errorf("默认管理员不能删除")
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("用户不存在")
+	}
+	return nil
 }
 
 func (s *Store) ensureDefaultActions(ctx context.Context) error {

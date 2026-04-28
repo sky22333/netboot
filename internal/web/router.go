@@ -42,8 +42,9 @@ type Backend interface {
 }
 
 type Handler struct {
-	app      Backend
-	sessions *SessionManager
+	app          Backend
+	sessions     *SessionManager
+	loginLimiter *LoginLimiter
 }
 
 func NewRouter(app Backend) http.Handler {
@@ -51,7 +52,7 @@ func NewRouter(app Backend) http.Handler {
 	r := gin.New()
 	r.MaxMultipartMemory = 2 << 30
 	r.Use(gin.Recovery(), bodyLimit(128<<20))
-	h := &Handler{app: app, sessions: NewSessionManager()}
+	h := &Handler{app: app, sessions: NewSessionManager(), loginLimiter: NewLoginLimiter()}
 
 	api := r.Group("/api/v1")
 	api.GET("/setup/status", h.setupStatus)
@@ -85,7 +86,7 @@ func NewRouter(app Backend) http.Handler {
 	protected.GET("/users", h.listUsers)
 	protected.POST("/users", h.createUserAPI)
 	protected.POST("/users/:id/password", h.changeUserPassword)
-	protected.POST("/users/:id/enabled", h.setUserEnabled)
+	protected.DELETE("/users/:id", h.deleteUser)
 	protected.GET("/files", h.listFiles)
 	protected.POST("/files/upload", h.uploadFile)
 	protected.POST("/files/mkdir", h.mkdirFile)
@@ -123,7 +124,12 @@ func (h *Handler) setup(c *gin.Context) {
 		return
 	}
 	var req struct{ Username, Password string }
-	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || len(req.Password) < 8 {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "VALIDATION_ERROR", "请求格式错误")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || len(req.Password) < 8 {
 		Fail(c, 400, "VALIDATION_ERROR", "用户名不能为空，密码至少 8 位")
 		return
 	}
@@ -141,10 +147,18 @@ func (h *Handler) login(c *gin.Context) {
 		Fail(c, 400, "VALIDATION_ERROR", "请求格式错误")
 		return
 	}
+	req.Username = strings.TrimSpace(req.Username)
+	key := c.ClientIP() + "|" + strings.ToLower(req.Username)
+	if !h.loginLimiter.Allow(key) {
+		Fail(c, http.StatusTooManyRequests, "LOGIN_RATE_LIMITED", "登录尝试过多，请 10 分钟后再试")
+		return
+	}
 	if !h.checkLogin(c.Request.Context(), req.Username, req.Password) {
+		h.loginLimiter.Fail(key)
 		Fail(c, 401, "LOGIN_FAILED", "用户名或密码错误")
 		return
 	}
+	h.loginLimiter.Success(key)
 	token := h.sessions.Create(req.Username)
 	http.SetCookie(c.Writer, &http.Cookie{Name: "pxe_session", Value: token, Path: "/", MaxAge: 86400, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	OK(c, gin.H{"username": req.Username})
@@ -162,17 +176,27 @@ func (h *Handler) status(c *gin.Context) {
 func (h *Handler) diagnostics(c *gin.Context) {
 	boot := h.app.BootConfig()
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	dhcpServers, _ := dhcp.DetectServers(c.Request.Context(), settings.Server.ListenIP, 1500*time.Millisecond, settings.Server.AdvertiseIP)
+	exclusions := []string{}
+	if settings.DHCP.Enabled && settings.DHCP.Mode == "dhcp" && settings.Server.AdvertiseIP != "" {
+		exclusions = append(exclusions, settings.Server.AdvertiseIP)
+	}
+	dhcpServers, _ := dhcp.DetectServers(c.Request.Context(), settings.Server.ListenIP, 1500*time.Millisecond, exclusions...)
+	permission := platform.Permission()
+	note := "DHCP 探测仅作为辅助诊断；部分热点、桥接网卡、防火墙或交换机可能拦截探测包。"
+	if len(exclusions) > 0 {
+		note = "完整 DHCP 已启用，探测结果已排除本程序通告 IP；其余结果仅作为辅助诊断。"
+	}
 	OK(c, gin.H{
 		"data_dir":              boot.Data.Dir,
 		"db":                    boot.Database.Path,
 		"admin_addr":            boot.Admin.AdminAddr,
-		"is_admin":              platform.IsAdminLike(),
+		"is_admin":              permission.AdminLike,
+		"permission":            permission,
 		"interfaces":            platform.Interfaces(),
 		"dhcp_servers":          dhcpServers,
-		"dhcp_probe_exclusions": []string{settings.Server.AdvertiseIP},
-		"dhcp_probe_note":       "DHCP 探测会排除本程序通告 IP，仅作为辅助诊断；部分热点、桥接网卡、防火墙或交换机可能拦截探测包。",
-		"suggestions":           []string{"监听 67/69/80 等低端口通常需要管理员/root 权限", "完整 DHCP 建议只在隔离网络中启用", "首次 PXE 测试建议先使用 ProxyDHCP"},
+		"dhcp_probe_exclusions": exclusions,
+		"dhcp_probe_note":       note,
+		"suggestions":           []string{"若客户端无法获取启动文件，请确认程序已被系统防火墙放行，并且监听 IP、通告 IP 与客户端处于可达网络。"},
 	})
 }
 
@@ -466,7 +490,12 @@ func (h *Handler) listUsers(c *gin.Context) {
 
 func (h *Handler) createUserAPI(c *gin.Context) {
 	var req struct{ Username, Password, Role string }
-	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || len(req.Password) < 8 {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "USER_INVALID", "请求格式错误")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || len(req.Password) < 8 {
 		Fail(c, 400, "USER_INVALID", "用户名不能为空，密码至少 8 位")
 		return
 	}
@@ -491,18 +520,17 @@ func (h *Handler) changeUserPassword(c *gin.Context) {
 	OK(c, gin.H{"message": "密码已修改"})
 }
 
-func (h *Handler) setUserEnabled(c *gin.Context) {
+func (h *Handler) deleteUser(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	var req struct{ Enabled bool }
-	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "USER_INVALID", "请求格式错误")
+	if id <= 0 {
+		Fail(c, 400, "USER_INVALID", "用户 ID 无效")
 		return
 	}
-	if err := h.app.Storage().SetUserEnabled(c.Request.Context(), id, req.Enabled); err != nil {
-		Fail(c, 500, "USER_UPDATE_FAILED", err.Error())
+	if err := h.app.Storage().DeleteUser(c.Request.Context(), id); err != nil {
+		Fail(c, 400, "USER_DELETE_FAILED", err.Error())
 		return
 	}
-	OK(c, gin.H{"id": id, "enabled": req.Enabled})
+	OK(c, gin.H{"deleted": id})
 }
 
 func (h *Handler) listFiles(c *gin.Context) {

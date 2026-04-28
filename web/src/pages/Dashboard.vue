@@ -16,8 +16,8 @@
           <p class="mt-1 text-sm text-neutral-500">启动或停止当前已启用的 PXE 服务。</p>
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-primary" :disabled="busy" @click="start">{{ busy ? '处理中...' : '启动服务' }}</button>
-          <button class="btn" :disabled="busy" @click="stop">停止服务</button>
+          <button class="btn btn-primary" :disabled="!canStart" @click="start">{{ busy ? '处理中...' : anyRunning ? '已启动' : '启动服务' }}</button>
+          <button class="btn" :disabled="!canStop" @click="stop">{{ busy ? '处理中...' : anyRunning ? '停止服务' : '已停止' }}</button>
         </div>
       </div>
       <p v-if="message" class="mt-3 text-sm" :class="error ? 'text-red-600' : 'text-neutral-500'">{{ message }}</p>
@@ -54,6 +54,10 @@ const compactEvents = computed(() => recent.value.slice(-6))
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
+const services = computed<Record<string, string>>(() => status.value?.services ?? {})
+const anyRunning = computed(() => Object.values(services.value).some((value) => value === 'running'))
+const canStart = computed(() => !busy.value && !anyRunning.value)
+const canStop = computed(() => !busy.value && anyRunning.value)
 
 async function load() {
   try {
@@ -64,6 +68,7 @@ async function load() {
   }
 }
 async function start() {
+  if (!canStart.value) return
   if (!window.confirm('确认启动已启用的 PXE 服务？完整 DHCP、TFTP、HTTP 可能需要管理员权限并影响当前局域网。')) return
   busy.value = true
   error.value = false
@@ -78,6 +83,7 @@ async function start() {
   }
 }
 async function stop() {
+  if (!canStop.value) return
   if (!window.confirm('确认停止所有 PXE 服务？正在启动或传输的客户端可能会中断。')) return
   busy.value = true
   error.value = false

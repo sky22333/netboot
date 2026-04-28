@@ -7,32 +7,39 @@
       </div>
       <div class="space-y-3">
         <label class="label">用户名</label>
-        <input v-model="username" class="input w-full" placeholder="admin" />
+        <input v-model.trim="username" class="input w-full" placeholder="admin" />
+        <p v-if="authMode === 'setup'" class="text-xs text-neutral-500">3-32 位，仅支持字母、数字、点、下划线、短横线和 @。</p>
         <label class="label">密码</label>
         <input v-model="password" class="input w-full" type="password" placeholder="至少 8 位" @keydown.enter="submitAuth" />
-        <button class="btn btn-primary w-full" @click="submitAuth">{{ authMode === 'setup' ? '创建账号' : '登录' }}</button>
+        <button class="btn btn-primary w-full" :disabled="authBusy" @click="submitAuth">{{ authBusy ? '处理中...' : authMode === 'setup' ? '创建账号' : '登录' }}</button>
         <p v-if="authError" class="text-sm text-red-600">{{ authError }}</p>
       </div>
     </div>
   </div>
   <div v-if="authMode === 'ready'" class="min-h-screen">
-    <aside class="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-neutral-200 bg-white lg:block">
+    <aside class="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-neutral-200 bg-white lg:flex">
       <div class="flex h-16 items-center border-b px-5">
         <div>
           <div class="text-lg font-semibold">pxe</div>
           <div class="text-xs text-neutral-500">网络启动管理控制台</div>
         </div>
       </div>
-      <nav class="space-y-1 p-3">
+      <nav class="flex-1 space-y-1 p-3">
         <RouterLink v-for="item in nav" :key="item.path" :to="item.path" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-neutral-700 transition hover:bg-neutral-100" active-class="bg-neutral-950 text-white hover:bg-neutral-950">
           <component :is="item.icon" class="h-4 w-4" />
           {{ item.name }}
         </RouterLink>
       </nav>
+      <div class="border-t p-3">
+        <a class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-950" href="https://github.com/sky22333/netboot" target="_blank" rel="noreferrer">
+          <Github class="h-4 w-4" />
+          GitHub
+        </a>
+      </div>
     </aside>
     <div v-if="mobileOpen" class="fixed inset-0 z-40 lg:hidden">
       <button class="absolute inset-0 bg-black/30" aria-label="关闭导航" @click="mobileOpen = false"></button>
-      <aside class="absolute inset-y-0 left-0 w-72 max-w-[82vw] border-r border-neutral-200 bg-white shadow-xl">
+      <aside class="absolute inset-y-0 left-0 flex w-72 max-w-[82vw] flex-col border-r border-neutral-200 bg-white shadow-xl">
         <div class="flex h-16 items-center justify-between border-b px-5">
           <div>
             <div class="text-lg font-semibold">pxe</div>
@@ -42,12 +49,18 @@
             <X class="h-4 w-4" />
           </button>
         </div>
-        <nav class="space-y-1 p-3">
+        <nav class="flex-1 space-y-1 p-3">
           <RouterLink v-for="item in nav" :key="item.path" :to="item.path" class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-neutral-700 transition hover:bg-neutral-100" active-class="bg-neutral-950 text-white hover:bg-neutral-950" @click="mobileOpen = false">
             <component :is="item.icon" class="h-4 w-4" />
             {{ item.name }}
           </RouterLink>
         </nav>
+        <div class="border-t p-3">
+          <a class="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-950" href="https://github.com/sky22333/netboot" target="_blank" rel="noreferrer">
+            <Github class="h-4 w-4" />
+            GitHub
+          </a>
+        </div>
       </aside>
     </div>
     <div class="lg:pl-64">
@@ -61,7 +74,7 @@
             <div class="truncate font-medium">{{ title }}</div>
           </div>
         </div>
-        <button class="btn btn-primary" @click="refresh">{{ refreshing ? '已刷新' : '刷新状态' }}</button>
+        <button class="btn btn-primary" :disabled="refreshing" @click="refresh">{{ refreshing ? '已刷新' : '刷新状态' }}</button>
       </header>
       <main class="p-4 lg:p-6">
         <RouterView v-slot="{ Component }">
@@ -77,7 +90,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Activity, Files, Gauge, HardDrive, ListTree, Menu, Network, ScrollText, Settings, TerminalSquare, Users, X } from 'lucide-vue-next'
+import { Activity, Files, Gauge, Github, HardDrive, ListTree, Menu, Network, ScrollText, Settings, TerminalSquare, Users, X } from 'lucide-vue-next'
 import { api } from './lib/api'
 
 const nav = [
@@ -99,6 +112,7 @@ const authMode = ref<'loading' | 'setup' | 'login' | 'ready'>('loading')
 const username = ref('admin')
 const password = ref('')
 const authError = ref('')
+const authBusy = ref(false)
 const refreshing = ref(false)
 const mobileOpen = ref(false)
 
@@ -124,6 +138,8 @@ async function checkAuth() {
 }
 
 async function submitAuth() {
+  if (authBusy.value) return
+  authBusy.value = true
   authError.value = ''
   try {
     if (authMode.value === 'setup') {
@@ -133,6 +149,8 @@ async function submitAuth() {
     authMode.value = 'ready'
   } catch (error) {
     authError.value = error instanceof Error ? error.message : '操作失败'
+  } finally {
+    authBusy.value = false
   }
 }
 

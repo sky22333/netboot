@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -74,6 +76,7 @@ func (a *App) Run(ctx context.Context) error {
 	a.admin = &http.Server{Addr: a.Boot.Admin.AdminAddr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
 	go func() {
+		fmt.Println("Web 面板: http://" + displayAdminAddr(a.Boot.Admin.AdminAddr))
 		a.Events.Publish("info", "web", "管理 Web 服务已启动: http://"+a.Boot.Admin.AdminAddr)
 		if err := a.admin.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
@@ -90,6 +93,17 @@ func (a *App) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+func displayAdminAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func (a *App) Status() any {

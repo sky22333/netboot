@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,13 +17,84 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
+const (
+	loginMaxFailures = 10
+	loginWindow      = 10 * time.Minute
+	loginLockout     = 10 * time.Minute
+	loginMaxEntries  = 2048
+)
+
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9._@-]{3,32}$`)
+
 type SessionManager struct {
 	mu       sync.RWMutex
 	sessions map[string]string
 }
 
+type LoginLimiter struct {
+	mu       sync.Mutex
+	attempts map[string]loginAttempt
+}
+
+type loginAttempt struct {
+	Failures    int
+	LockedUntil time.Time
+	UpdatedAt   time.Time
+}
+
 func NewSessionManager() *SessionManager {
 	return &SessionManager{sessions: map[string]string{}}
+}
+
+func NewLoginLimiter() *LoginLimiter {
+	return &LoginLimiter{attempts: map[string]loginAttempt{}}
+}
+
+func (l *LoginLimiter) Allow(key string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pruneLocked(now)
+	item := l.attempts[key]
+	if now.After(item.LockedUntil) && now.Sub(item.UpdatedAt) > loginWindow {
+		delete(l.attempts, key)
+		return true
+	}
+	return now.After(item.LockedUntil)
+}
+
+func (l *LoginLimiter) Fail(key string) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	item := l.attempts[key]
+	if now.Sub(item.UpdatedAt) > loginWindow {
+		item.Failures = 0
+	}
+	item.Failures++
+	item.UpdatedAt = now
+	if item.Failures >= loginMaxFailures {
+		item.LockedUntil = now.Add(loginLockout)
+	}
+	l.attempts[key] = item
+	l.pruneLocked(now)
+}
+
+func (l *LoginLimiter) Success(key string) {
+	l.mu.Lock()
+	delete(l.attempts, key)
+	l.mu.Unlock()
+}
+
+func (l *LoginLimiter) pruneLocked(now time.Time) {
+	if len(l.attempts) <= loginMaxEntries {
+		return
+	}
+	for key, item := range l.attempts {
+		if now.After(item.LockedUntil) && now.Sub(item.UpdatedAt) > loginWindow {
+			delete(l.attempts, key)
+		}
+	}
 }
 
 func (s *SessionManager) Create(username string) string {
@@ -65,6 +137,13 @@ func hashPassword(password string) (string, error) {
 	return fmt.Sprintf("argon2id$%s$%s", base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(hash)), nil
 }
 
+func validateUsername(username string) error {
+	if !usernamePattern.MatchString(username) {
+		return fmt.Errorf("用户名需为 3-32 位，只能包含字母、数字、点、下划线、短横线或 @")
+	}
+	return nil
+}
+
 func verifyPassword(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 3 || parts[0] != "argon2id" {
@@ -86,6 +165,10 @@ func (h *Handler) hasUsers(ctx context.Context) bool {
 }
 
 func (h *Handler) createUser(ctx context.Context, username, password string) error {
+	username = strings.TrimSpace(username)
+	if err := validateUsername(username); err != nil {
+		return err
+	}
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
@@ -96,8 +179,15 @@ func (h *Handler) createUser(ctx context.Context, username, password string) err
 }
 
 func (h *Handler) createUserWithRole(ctx context.Context, username, password, role string) error {
+	username = strings.TrimSpace(username)
+	if err := validateUsername(username); err != nil {
+		return err
+	}
 	if role == "" {
 		role = "admin"
+	}
+	if role != "admin" {
+		return fmt.Errorf("不支持的用户角色")
 	}
 	hash, err := hashPassword(password)
 	if err != nil {

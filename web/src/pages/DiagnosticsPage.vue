@@ -18,9 +18,10 @@
       <div class="card p-4">
         <div class="text-sm text-neutral-500">权限状态</div>
         <div class="mt-2 flex items-center gap-2 font-semibold">
-          <span class="h-2.5 w-2.5 rounded-full" :class="data?.is_admin ? 'bg-green-500' : 'bg-amber-500'" />
-          {{ data?.is_admin ? '具备低端口权限' : '可能缺少低端口权限' }}
+          <span class="h-2.5 w-2.5 rounded-full" :class="permission.status === 'ok' ? 'bg-green-500' : permission.status === 'warning' ? 'bg-amber-500' : 'bg-neutral-300'" />
+          {{ permission.label }}
         </div>
+        <div class="mt-1 text-xs text-neutral-500">{{ permission.detail }}</div>
       </div>
       <div class="card p-4">
         <div class="text-sm text-neutral-500">管理端地址</div>
@@ -31,7 +32,7 @@
         <div class="mt-2 font-semibold" :class="dhcpServers.length ? 'text-amber-700' : 'text-green-700'">
           {{ dhcpServers.length ? `发现 ${dhcpServers.length} 个 DHCP 服务` : '未发现额外 DHCP 服务' }}
         </div>
-        <div class="mt-1 text-xs text-neutral-500">已排除本程序通告 IP。</div>
+        <div v-if="exclusions.length" class="mt-1 text-xs text-neutral-500">已排除本程序通告 IP：{{ exclusions.join(', ') }}</div>
       </div>
     </section>
 
@@ -59,7 +60,7 @@
               <span v-for="flag in flagList(item.flags)" :key="flag" class="rounded border border-neutral-200 px-1.5 py-0.5 text-[11px] text-neutral-500">{{ flag }}</span>
             </div>
           </div>
-          <div class="flex min-w-0 flex-wrap gap-1">
+          <div class="flex min-w-0 flex-wrap gap-1 overflow-hidden">
             <span v-for="ip in item.ips" :key="ip" class="rounded border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600">{{ ip }}</span>
           </div>
         </div>
@@ -93,12 +94,49 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { api } from '../lib/api'
 
-const data = ref<any>()
+type Permission = {
+  admin_like: boolean
+  status: 'ok' | 'warning' | 'unknown'
+  label: string
+  detail: string
+}
+
+type Diagnostics = {
+  data_dir: string
+  db: string
+  admin_addr: string
+  is_admin: boolean
+  permission: Permission
+  interfaces: Array<{ name: string; flags: string; ips: string[] }>
+  dhcp_servers: string[]
+  dhcp_probe_exclusions: string[]
+  dhcp_probe_note: string
+  suggestions: string[]
+}
+
+function emptyDiagnostics(): Diagnostics {
+  return {
+    data_dir: '',
+    db: '',
+    admin_addr: '',
+    is_admin: false,
+    permission: { admin_like: false, status: 'unknown', label: '等待诊断', detail: '点击重新诊断后会显示当前权限状态。' },
+    interfaces: [],
+    dhcp_servers: [],
+    dhcp_probe_exclusions: [],
+    dhcp_probe_note: '等待诊断结果。',
+    suggestions: []
+  }
+}
+
+const data = ref<Diagnostics>(emptyDiagnostics())
 const loading = ref(false)
 const error = ref('')
-const interfaces = computed(() => Array.isArray(data.value?.interfaces) ? data.value.interfaces : [])
-const dhcpServers = computed(() => Array.isArray(data.value?.dhcp_servers) ? data.value.dhcp_servers : [])
-const suggestions = computed(() => Array.isArray(data.value?.suggestions) ? data.value.suggestions : [])
+const interfaces = computed(() => data.value.interfaces)
+const dhcpServers = computed(() => data.value.dhcp_servers)
+const suggestions = computed(() => data.value.suggestions)
+const exclusions = computed(() => data.value.dhcp_probe_exclusions)
+const permission = computed(() => data.value.permission)
 
 function flagList(flags: string) {
   return String(flags || '').split('|').filter(Boolean)
@@ -107,8 +145,9 @@ function flagList(flags: string) {
 async function load() {
   loading.value = true
   error.value = ''
+  data.value = emptyDiagnostics()
   try {
-    data.value = await api('/diagnostics')
+    data.value = await api<Diagnostics>('/diagnostics')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '诊断失败'
   } finally {

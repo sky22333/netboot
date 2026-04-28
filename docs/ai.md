@@ -163,6 +163,8 @@ format = "text"
 
 - 默认管理端监听 `127.0.0.1`。
 - 首次使用创建管理员账号。
+- 用户名限制为 3-32 位 ASCII 字符，只允许字母、数字、点、下划线、短横线和 `@`。
+- 登录失败按来源 IP 和用户名限流，10 分钟内失败 10 次会锁定 10 分钟。
 - 远程管理必须启用认证。
 - Cookie 使用 HttpOnly 和 SameSite。
 - 文件访问必须限制在配置根目录内。
@@ -178,6 +180,7 @@ cd pxe
 (cd web && npm ci && npm run build)
 go test ./...
 go vet ./...
+mkdir -p dist
 go build -trimpath -ldflags="-s -w" -o dist/pxe ./cmd/pxe
 ```
 
@@ -189,8 +192,11 @@ npm ci --prefix web
 npm run build --prefix web
 go test ./...
 go vet ./...
+New-Item -ItemType Directory -Force -Path dist | Out-Null
 go build -trimpath -ldflags="-s -w" -o dist\pxe.exe .\cmd\pxe
 ```
+
+生产构建必须保留 `-trimpath -ldflags="-s -w"`，用于减小单文件体积并避免暴露本地构建路径。
 
 GitHub Actions：
 
