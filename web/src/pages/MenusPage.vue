@@ -4,22 +4,22 @@
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 class="text-lg font-semibold">启动菜单</h1>
-          <p class="mt-1 text-sm text-neutral-500">管理传统 PXE 菜单和 iPXE 动态菜单。当前 DHCP 会优先让客户端进入可执行 NBP，再由 iPXE 处理现代菜单。</p>
+          <p class="mt-1 text-sm text-neutral-500">管理 PXE 启动菜单。BIOS 和 ProxyDHCP 默认下发启动文件；UEFI 在完整 DHCP 模式下可使用原生菜单；进入 iPXE 后使用动态 HTTP 菜单。</p>
         </div>
         <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中...' : '保存菜单' }}</button>
       </div>
       <div class="mt-4 grid gap-3 lg:grid-cols-3">
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">BIOS PXE</div>
-          <p class="mt-1 text-xs text-neutral-500">老式 BIOS 默认直接返回可执行文件，不再默认使用原生 Option 43 菜单，兼容性更稳。</p>
+          <p class="mt-1 text-xs text-neutral-500">老式 BIOS 默认直接下发启动文件，避免原生菜单兼容问题。</p>
         </div>
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">UEFI PXE</div>
-          <p class="mt-1 text-xs text-neutral-500">完整 DHCP 模式下可使用原生 PXE 菜单；ProxyDHCP 下仍优先返回启动文件。</p>
+          <p class="mt-1 text-xs text-neutral-500">完整 DHCP 可显示原生菜单；ProxyDHCP 默认下发启动文件。</p>
         </div>
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">iPXE 菜单</div>
-          <p class="mt-1 text-xs text-neutral-500">进入 iPXE 后使用动态 HTTP 菜单；不支持 HTTP 的 iPXE 会回退到可执行 netboot 文件。</p>
+          <p class="mt-1 text-xs text-neutral-500">支持 HTTP 时显示动态菜单；不支持时回退到可执行启动文件。</p>
         </div>
       </div>
     </div>
@@ -107,9 +107,9 @@ function modeText(type: string) {
   return '动态菜单'
 }
 function menuHint(type: string) {
-  if (type === 'bios') return '当前代码对 BIOS PXE 默认下发可执行启动文件；这里主要保留给菜单选择兼容。'
-  if (type === 'uefi') return 'UEFI 客户端可使用原生 PXE 菜单，也可直接下发 UEFI 可执行文件。'
-  return 'iPXE 菜单用于进入现代 HTTP 引导流程，支持动态列出可启动文件和 netboot.xyz。'
+  if (type === 'bios') return 'BIOS 客户端默认使用启动文件；这里用于保留传统菜单项和兼容配置。'
+  if (type === 'uefi') return 'UEFI 客户端在完整 DHCP 模式下可显示原生菜单，也可直接使用启动文件。'
+  return 'iPXE 菜单通过 HTTP 动态生成，可列出本地启动文件和 netboot.xyz。'
 }
 function menuNote(type: string) {
   if (type === 'ipxe') return 'iPXE 菜单支持动态宏，例如 %dynamicboot%=ipxefm；路径建议使用 HTTP 可访问的相对路径或完整 URL。'
