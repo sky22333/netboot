@@ -426,7 +426,7 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 			}
 		}
 	}
-	if menu.Enabled && !proxy {
+	if menu.Enabled && !proxy && arch != "bios" {
 		opt43 := pxeopt.BuildOption43(menu, settings.Server.AdvertiseIP)
 		events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原生 PXE 菜单: %s", mac, menu.MenuType))
 		return offerBootFile(req, settings, clientIP, "", opt43, proxy)
