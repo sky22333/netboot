@@ -18,11 +18,13 @@
 
 [Releases](https://github.com/sky22333/netboot/releases)页面下载构建好的二进制文件
 
-```powershell
-.\dist\pxe.exe
+win系统直接双击打开，linux系统需要使用命令行启动。
+
+```
+./pxe
 ```
 
-不带参数启动时，程序会切换到可执行文件所在目录，并在当前目录创建 `data/`。常用参数（可选项）：
+不带参数启动时，程序会切换到可执行文件所在目录，并在当前目录自动创建`data`目录。常用参数（可选项）：
 
 ```text
 --config     指定 pxe.toml
@@ -32,11 +34,7 @@
 --no-browser 禁止自动打开浏览器
 ```
 
-启动成功后，终端会输出 Web 面板访问地址，例如：
-
-```text
-Web 面板: http://127.0.0.1:8088
-```
+启动成功后，会自动打开默认浏览器访问管理面板，终端环境没有浏览器的场景则不会打开。
 
 ## 运行时目录
 
@@ -57,6 +55,28 @@ data/
 `boot/netboot` 会通过 TFTP 的 `netboot/...` 和 HTTP 的 `/netboot/...` 暴露出来，不需要复制到 `boot/tftp` 或 `boot/http`。完全离线时请把 netboot.xyz 启动文件放在 `boot/netboot`，把 ISO/WIM/VHD/内核等大文件放在 `boot/http`。
 
 更多内容见 [docs](./docs)。
+
+## 页面预览
+
+![1](docs/images/demo1.png)
+
+---
+
+![2](docs/images/demo2.png)
+
+---
+
+![3](docs/images/demo3.png)
+
+---
+
+![4](docs/images/demo4.png)
+
+---
+
+![5](docs/images/demo5.png)
+
+---
 
 ## 💬 支持与反馈
 
