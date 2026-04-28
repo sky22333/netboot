@@ -79,8 +79,8 @@
             <div class="mt-1 text-xs text-neutral-500">探测地址：{{ probe.ip }} → {{ probe.broadcast }}</div>
           </div>
           <div class="min-w-0">
-            <div v-if="probe.servers.length" class="flex flex-wrap gap-2">
-              <span v-for="server in probe.servers" :key="server" class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-800">{{ server }}</span>
+            <div v-if="probeServers(probe).length" class="flex flex-wrap gap-2">
+              <span v-for="server in probeServers(probe)" :key="server" class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-sm text-amber-800">{{ server }}</span>
             </div>
             <div v-else-if="probe.error" class="break-words text-xs text-amber-700">{{ probe.error }}</div>
             <div v-else class="text-xs text-neutral-500">未收到 DHCP Offer。</div>
@@ -175,6 +175,10 @@ function emptyDHCPDiagnostics(): DHCPDiagnostics {
 
 function flagList(flags: string) {
   return String(flags || '').split('|').filter(Boolean)
+}
+
+function probeServers(probe: { servers?: string[] | null }) {
+  return Array.isArray(probe.servers) ? probe.servers : []
 }
 
 async function load() {

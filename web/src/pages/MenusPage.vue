@@ -57,7 +57,7 @@
           <span>启用</span>
         </div>
         <div class="space-y-2">
-          <div v-for="item in menu.items" :key="item.id" class="grid gap-2 rounded-md border border-neutral-200 p-2 md:grid-cols-[1.2fr_1.6fr_.7fr_.9fr_auto]">
+          <div v-for="item in menuItems(menu)" :key="item.id" class="grid gap-2 rounded-md border border-neutral-200 p-2 md:grid-cols-[1.2fr_1.6fr_.7fr_.9fr_auto]">
             <input v-model="item.title" class="input" placeholder="例如 netboot.xyz" />
             <input v-model="item.boot_file" class="input" placeholder="例如 netboot/netboot.xyz.kpxe 或 %dynamicboot%=ipxefm" />
             <input v-model="item.pxe_type" class="input" placeholder="8000" />
@@ -83,12 +83,16 @@ const message = ref('')
 const error = ref(false)
 const names: Record<string, string> = { bios: 'BIOS 菜单', uefi: 'UEFI 菜单', ipxe: 'iPXE 菜单' }
 
-async function load() { menus.value = await api('/menus') }
+async function load() {
+  const rows = await api<any[]>('/menus')
+  menus.value = Array.isArray(rows) ? rows.map(normalizeMenu) : []
+}
 async function save() {
   saving.value = true
   error.value = false
   try {
-    menus.value = await api('/menus', { method: 'PUT', body: JSON.stringify(menus.value) })
+    const rows = await api<any[]>('/menus', { method: 'PUT', body: JSON.stringify(menus.value.map(normalizeMenu)) })
+    menus.value = Array.isArray(rows) ? rows.map(normalizeMenu) : []
     message.value = '菜单已保存，后续 PXE 请求会使用新菜单。'
   } catch (e) {
     error.value = true
@@ -110,6 +114,12 @@ function menuHint(type: string) {
 function menuNote(type: string) {
   if (type === 'ipxe') return 'iPXE 菜单支持动态宏，例如 %dynamicboot%=ipxefm；路径建议使用 HTTP 可访问的相对路径或完整 URL。'
   return '传统 PXE 菜单名称建议使用 ASCII；PXE 类型码需要保持唯一，服务器 IP 可用 %tftpserver% 表示当前通告 IP。'
+}
+function normalizeMenu(menu: any) {
+  return { ...menu, items: Array.isArray(menu?.items) ? menu.items : [] }
+}
+function menuItems(menu: any) {
+  return Array.isArray(menu?.items) ? menu.items : []
 }
 onMounted(load)
 </script>

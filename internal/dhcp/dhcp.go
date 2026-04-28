@@ -770,7 +770,7 @@ func DetectServersByInterface(ctx context.Context, listenIP string, timeout time
 	results := make([]InterfaceProbe, 0, len(targets))
 	for i, target := range targets {
 		xid := []byte{0x50, 0x58, 0x45, byte(i + 1)}
-		item := InterfaceProbe{Interface: target.name, IP: target.ip.String(), Broadcast: target.broadcast.String()}
+		item := InterfaceProbe{Interface: target.name, IP: target.ip.String(), Broadcast: target.broadcast.String(), Servers: []string{}}
 		servers, err := detectServersOnIP(ctx, target.ip.String(), target.broadcast.String(), timeout, xid, excluded)
 		if err != nil {
 			item.Error = err.Error()

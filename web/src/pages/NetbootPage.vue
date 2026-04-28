@@ -9,8 +9,8 @@
       <div>保存目录：{{ info.download_dir }}</div>
       <div>文件：{{ info.files?.join(', ') }}</div>
     </div>
-    <div v-if="info?.local" class="mt-4 grid gap-2 md:grid-cols-3">
-      <div v-for="item in info.local" :key="item.file" class="rounded-md border p-3 text-sm">
+    <div v-if="localFiles.length" class="mt-4 grid gap-2 md:grid-cols-3">
+      <div v-for="item in localFiles" :key="item.file" class="rounded-md border p-3 text-sm">
         <div class="font-medium">{{ item.file }}</div>
         <div class="mt-1" :class="item.exists ? 'text-green-700' : 'text-neutral-500'">{{ item.exists ? '已存在' : '未下载' }}</div>
         <div v-if="item.exists" class="mt-1 text-xs text-neutral-500">{{ item.size }} B</div>
@@ -29,13 +29,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
 const info = ref<any>()
 const results = ref<any[]>([])
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
+const localFiles = computed(() => Array.isArray(info.value?.local) ? info.value.local : [])
 async function load() { info.value = await api('/netbootxyz/files') }
 async function download() {
   const files = info.value?.files?.join(', ') ?? ''
@@ -43,7 +44,8 @@ async function download() {
   busy.value = true
   error.value = false
   try {
-    results.value = await api('/netbootxyz/download', { method: 'POST' })
+    const rows = await api<any[]>('/netbootxyz/download', { method: 'POST' })
+    results.value = Array.isArray(rows) ? rows : []
     message.value = '下载任务已完成。'
     await load()
   } catch (e) {

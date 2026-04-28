@@ -41,7 +41,7 @@ const busy = ref(false)
 const message = ref('')
 const error = ref(false)
 const statusText: Record<string, string> = { unknown: '未知', unassigned: '待认领', online: '在线', offline: '离线', pxe: 'PXE', ipxe: 'iPXE' }
-async function load() { clients.value = await api('/clients') }
+async function load() { const rows = await api<any[]>('/clients'); clients.value = Array.isArray(rows) ? rows : [] }
 async function run(task: () => Promise<void>) {
   busy.value = true
   error.value = false

@@ -23,9 +23,9 @@ import { api } from '../lib/api'
 const actions = ref<any[]>([])
 const clientIDs = ref('')
 const message = ref('')
-async function load() { actions.value = await api('/actions') }
+async function load() { const rows = await api<any[]>('/actions'); actions.value = Array.isArray(rows) ? rows : [] }
 function add() { actions.value.push({ sort_order: actions.value.length + 1, name: '新操作', command: 'cmd', args: '', enabled: true }) }
-async function save() { actions.value = await api('/actions', { method: 'PUT', body: JSON.stringify(actions.value) }) }
-async function execute(id: number) { const ids = clientIDs.value.split(',').map(v => Number(v.trim())).filter(Boolean); const r: any = await api(`/actions/${id}/execute`, { method: 'POST', body: JSON.stringify({ client_ids: ids }) }); message.value = `执行完成：${r.length} 项` }
+async function save() { const rows = await api<any[]>('/actions', { method: 'PUT', body: JSON.stringify(actions.value) }); actions.value = Array.isArray(rows) ? rows : [] }
+async function execute(id: number) { const ids = clientIDs.value.split(',').map(v => Number(v.trim())).filter(Boolean); const r: any = await api(`/actions/${id}/execute`, { method: 'POST', body: JSON.stringify({ client_ids: ids }) }); message.value = `执行完成：${Array.isArray(r) ? r.length : 0} 项` }
 onMounted(load)
 </script>

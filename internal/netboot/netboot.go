@@ -28,7 +28,7 @@ type Result struct {
 func Download(ctx context.Context, settings storage.NetbootXYZSettings, events *observability.Hub) []Result {
 	_ = os.MkdirAll(settings.DownloadDir, 0755)
 	client := &http.Client{Timeout: 90 * time.Second}
-	var results []Result
+	results := []Result{}
 	for _, name := range settings.Files {
 		name = filepath.Base(name)
 		target := filepath.Join(settings.DownloadDir, name)

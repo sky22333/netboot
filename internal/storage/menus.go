@@ -47,7 +47,7 @@ func (s *Store) ListMenus(ctx context.Context) ([]Menu, error) {
 	if err != nil {
 		return nil, err
 	}
-	var menus []Menu
+	menus := []Menu{}
 	for rows.Next() {
 		var m Menu
 		var enabled, randomize int
@@ -82,7 +82,7 @@ func (s *Store) listMenuItems(ctx context.Context, menuID int64) ([]MenuItem, er
 		return nil, err
 	}
 	defer rows.Close()
-	var items []MenuItem
+	items := []MenuItem{}
 	for rows.Next() {
 		var item MenuItem
 		var enabled int

@@ -313,7 +313,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Client
+	out := []Client{}
 	for rows.Next() {
 		var c Client
 		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.LastBootFile, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt); err != nil {
@@ -443,7 +443,7 @@ func (s *Store) UnassignedClients(ctx context.Context) ([]Client, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Client
+	out := []Client{}
 	for rows.Next() {
 		var c Client
 		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.LastBootFile, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt); err != nil {
@@ -470,7 +470,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []User
+	out := []User{}
 	for rows.Next() {
 		var u User
 		var enabled int
@@ -526,7 +526,7 @@ func (s *Store) ListActions(ctx context.Context) ([]ClientAction, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ClientAction
+	out := []ClientAction{}
 	for rows.Next() {
 		var a ClientAction
 		var enabled int
@@ -605,7 +605,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]Event, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Event
+	out := []Event{}
 	for rows.Next() {
 		var e Event
 		if err := rows.Scan(&e.ID, &e.TS, &e.Level, &e.Source, &e.Message, &e.FieldsJSON); err != nil {

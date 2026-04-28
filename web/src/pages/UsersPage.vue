@@ -75,7 +75,8 @@ const canCreate = computed(() => usernamePattern.test(username.value.trim()) && 
 async function load() {
   loading.value = true
   try {
-    users.value = await api<User[]>('/users')
+    const rows = await api<User[]>('/users')
+    users.value = Array.isArray(rows) ? rows : []
   } finally {
     loading.value = false
   }

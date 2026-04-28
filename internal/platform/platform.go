@@ -24,7 +24,7 @@ func Interfaces() []NetworkInterface {
 	out := make([]NetworkInterface, 0, len(ifaces))
 	for _, iface := range ifaces {
 		addrs, _ := iface.Addrs()
-		item := NetworkInterface{Name: iface.Name, Flags: iface.Flags.String()}
+		item := NetworkInterface{Name: iface.Name, Flags: iface.Flags.String(), IPs: []string{}}
 		for _, addr := range addrs {
 			item.IPs = append(item.IPs, addr.String())
 		}
