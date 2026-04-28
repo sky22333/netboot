@@ -157,7 +157,7 @@ format = "text"
 
 - 全中文。
 - 移动端使用抽屉导航。
-- 日志通过 SSE 实时更新，并定时补齐历史日志。
+- 日志通过 SSE 实时更新；仪表盘和日志页共用 `web/src/lib/eventLog.ts`，按事件 ID 升序显示，最多保留最近 1000 条，避免重复 SSE、乱序刷新和无限内存增长。
 - 文件管理必须做路径限制和危险操作确认。
 - 完整 DHCP、删除、上传、外部下载等高风险操作必须明确提示。
 
@@ -178,9 +178,6 @@ format = "text"
 ```bash
 cd pxe
 (cd web && npm ci && npm run build)
-rm -rf internal/web/dist
-mkdir -p internal/web/dist
-cp -R web/dist/. internal/web/dist/
 go test ./...
 go vet ./...
 go build -trimpath -ldflags="-s -w" -o dist/pxe ./cmd/pxe
@@ -192,8 +189,6 @@ Windows：
 cd pxe
 npm ci --prefix web
 npm run build --prefix web
-Remove-Item -Recurse -Force internal\web\dist -ErrorAction SilentlyContinue
-Copy-Item -Recurse web\dist internal\web\dist
 go test ./...
 go vet ./...
 go build -trimpath -ldflags="-s -w" -o dist\pxe.exe .\cmd\pxe
@@ -211,7 +206,7 @@ GitHub Actions：
 完全离线时：
 
 1. 把 `netboot.xyz.kpxe`、`netboot.xyz-undionly.kpxe`、`netboot.xyz.efi` 放到 `data/boot/netboot`。
-2. 把 ISO/WIM/IMG/VHD 等镜像放到 `data/boot/http`。
+2. 把 ISO/WIM/IMG/VHD、Linux 内核、initrd 和自动安装配置放到 `data/boot/http`。
 3. 在启动菜单中添加本地镜像路径，例如 `images/winpe.iso`。
 4. 不依赖公网 URL 的菜单才是真正离线可用菜单。
 

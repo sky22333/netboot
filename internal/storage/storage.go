@@ -221,7 +221,7 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	if settings.Torrent.Addr == "" {
 		settings.Torrent.Addr = defaults.Torrent.Addr
 	}
-	if settings.BootFiles.IPXE == "" || settings.BootFiles.IPXE == "ipxeboot.txt" {
+	if settings.BootFiles.IPXE == "" {
 		settings.BootFiles.IPXE = defaults.BootFiles.IPXE
 	}
 }
@@ -577,14 +577,17 @@ func (s *Store) AddEvent(ctx context.Context, level, source, message string, fie
 		raw = string(b)
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO events(ts,level,source,message,fields_json) VALUES(?,?,?,?,?)`, Now(), level, source, message, raw)
+	if err == nil {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 5000)`)
+	}
 	return err
 }
 
 func (s *Store) RecentEvents(ctx context.Context, limit int) ([]Event, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,ts,level,source,message,COALESCE(fields_json,'') FROM events ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,ts,level,source,message,COALESCE(fields_json,'') FROM (SELECT id,ts,level,source,message,fields_json FROM events ORDER BY id DESC LIMIT ?) ORDER BY id ASC`, limit)
 	if err != nil {
 		return nil, err
 	}

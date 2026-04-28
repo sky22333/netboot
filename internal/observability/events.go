@@ -7,6 +7,7 @@ import (
 )
 
 type Event struct {
+	ID      uint64 `json:"id"`
 	Time    string `json:"time"`
 	Level   string `json:"level"`
 	Source  string `json:"source"`
@@ -18,14 +19,15 @@ type Hub struct {
 	subscribers map[chan Event]struct{}
 	recent      []Event
 	maxRecent   int
+	nextID      uint64
 }
 
 func NewHub() *Hub {
-	return &Hub{subscribers: map[chan Event]struct{}{}, maxRecent: 200}
+	return &Hub{subscribers: map[chan Event]struct{}{}, maxRecent: 1000}
 }
 
 func (h *Hub) Publish(level, source, message string) {
-	event := Event{Time: time.Now().Format(time.RFC3339), Level: level, Source: source, Message: message}
+	now := time.Now()
 	switch level {
 	case "error":
 		slog.Error(message, "source", source)
@@ -35,9 +37,11 @@ func (h *Hub) Publish(level, source, message string) {
 		slog.Info(message, "source", source)
 	}
 	h.mu.Lock()
-	h.recent = append([]Event{event}, h.recent...)
+	h.nextID++
+	event := Event{ID: h.nextID, Time: now.Format(time.RFC3339Nano), Level: level, Source: source, Message: message}
+	h.recent = append(h.recent, event)
 	if len(h.recent) > h.maxRecent {
-		h.recent = h.recent[:h.maxRecent]
+		h.recent = h.recent[len(h.recent)-h.maxRecent:]
 	}
 	for ch := range h.subscribers {
 		select {

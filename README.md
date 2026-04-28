@@ -19,8 +19,6 @@ Go + Vue 3 的跨平台 PXE 网络启动管理服务。
 ```powershell
 npm ci --prefix web
 npm run build --prefix web
-Remove-Item -Recurse -Force internal\web\dist -ErrorAction SilentlyContinue
-Copy-Item -Recurse web\dist internal\web\dist
 go test ./...
 go vet ./...
 go build -o dist\pxe.exe .\cmd\pxe
@@ -30,9 +28,6 @@ Linux/macOS：
 
 ```bash
 (cd web && npm ci && npm run build)
-rm -rf internal/web/dist
-mkdir -p internal/web/dist
-cp -R web/dist/. internal/web/dist/
 go test ./...
 go vet ./...
 go build -o dist/pxe ./cmd/pxe
@@ -70,6 +65,6 @@ data/
 └─ exports/
 ```
 
-`boot/netboot` 会通过 TFTP 的 `netboot/...` 和 HTTP 的 `/netboot/...` 暴露出来，不需要复制到 `boot/tftp` 或 `boot/http`。
+`boot/netboot` 会通过 TFTP 的 `netboot/...` 和 HTTP 的 `/netboot/...` 暴露出来，不需要复制到 `boot/tftp` 或 `boot/http`。完全离线时请把 netboot.xyz 启动文件放在 `boot/netboot`，把 ISO/WIM/VHD/内核等大文件放在 `boot/http`。
 
 更多内容见 [docs](./docs)。

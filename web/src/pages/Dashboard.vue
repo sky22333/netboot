@@ -23,13 +23,22 @@
       <p v-if="message" class="mt-3 text-sm" :class="error ? 'text-red-600' : 'text-neutral-500'">{{ message }}</p>
     </section>
     <section class="card p-5">
-      <h2 class="text-lg font-semibold">实时事件</h2>
-      <div class="mt-4 space-y-2">
-        <div v-for="event in events" :key="event.time + event.message" class="rounded-md border border-neutral-200 p-3 text-sm">
-          <span class="font-medium">{{ event.source }}</span>
-          <span class="mx-2 text-neutral-400">/</span>
-          <span>{{ event.message }}</span>
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-semibold">实时事件</h2>
+          <p class="mt-1 text-sm text-neutral-500">与日志页面使用同一条实时事件流，最新事件显示在底部。</p>
         </div>
+        <span class="text-xs text-neutral-500">{{ connected ? '实时连接正常' : '连接重试中' }}</span>
+      </div>
+      <div class="mt-4 space-y-2">
+        <div v-for="event in recent" :key="event.id" class="rounded-md border border-neutral-200 p-3 text-sm">
+          <div class="flex items-center justify-between gap-3">
+            <span class="font-medium">{{ event.source }}</span>
+            <span class="text-xs text-neutral-500">{{ shortTime(event.time) }}</span>
+          </div>
+          <div class="mt-1 break-words text-neutral-700">{{ event.message }}</div>
+        </div>
+        <div v-if="recent.length === 0" class="rounded-md border border-neutral-200 p-4 text-sm text-neutral-500">暂无事件。</div>
       </div>
     </section>
   </div>
@@ -38,15 +47,14 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { useEventLog } from '../lib/eventLog'
 
 const labels: Record<string, string> = { dhcp: '完整 DHCP', proxy_dhcp_67: 'ProxyDHCP 发现', proxy_dhcp: 'ProxyDHCP 4011', tftp: 'TFTP', httpboot: 'HTTP Boot', torrent: 'Tracker' }
 const status = ref<any>()
-const events = ref<any[]>([])
+const { recent, connected, load: loadEvents, connect: connectEvents } = useEventLog()
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
-let es: EventSource | null = null
-let retryTimer: number | undefined
 
 async function load() {
   try {
@@ -84,34 +92,23 @@ async function stop() {
     busy.value = false
   }
 }
-function connectEvents() {
-  es?.close()
-  es = new EventSource('/api/v1/events/stream', { withCredentials: true })
-  es.onmessage = (msg) => {
-    try {
-      events.value.unshift(JSON.parse(msg.data))
-      events.value = events.value.slice(0, 20)
-    } catch {
-      // 忽略心跳或异常事件，保持页面稳定。
-    }
-  }
-  es.onerror = () => {
-    es?.close()
-    es = null
-    if (retryTimer) window.clearTimeout(retryTimer)
-    retryTimer = window.setTimeout(connectEvents, 3000)
-  }
+function shortTime(value: string) {
+  const match = value.match(/T(\d{2}:\d{2}:\d{2})/)
+  return match?.[1] ?? value.slice(0, 19)
 }
 
 onMounted(() => {
-  load()
-  window.addEventListener('pxe-refresh', load)
+  refreshAll()
+  window.addEventListener('pxe-refresh', refreshAll)
   connectEvents()
 })
 
 onUnmounted(() => {
-  window.removeEventListener('pxe-refresh', load)
-  es?.close()
-  if (retryTimer) window.clearTimeout(retryTimer)
+  window.removeEventListener('pxe-refresh', refreshAll)
 })
+
+function refreshAll() {
+  load()
+  loadEvents(200)
+}
 </script>

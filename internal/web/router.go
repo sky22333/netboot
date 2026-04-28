@@ -672,34 +672,18 @@ func (h *Handler) createTorrent(c *gin.Context) {
 }
 
 func (h *Handler) logs(c *gin.Context) {
-	boot := h.app.BootConfig()
-	path := filepath.Join(boot.Data.Dir, "logs", "pxe.log")
-	b, _ := tailFile(path, 1024*1024)
-	lines := strings.Split(string(b), "\n")
-	if len(lines) > 300 {
-		lines = lines[len(lines)-300:]
+	limit := 500
+	if raw := c.Query("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
 	}
-	OK(c, lines)
-}
-
-func tailFile(path string, maxBytes int64) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+	events, err := h.app.Storage().RecentEvents(c.Request.Context(), limit)
+	if err != nil || len(events) == 0 {
+		OK(c, h.app.EventHub().Recent())
+		return
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	start := info.Size() - maxBytes
-	if start < 0 {
-		start = 0
-	}
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, err
-	}
-	return io.ReadAll(f)
+	OK(c, events)
 }
 
 func (h *Handler) eventStream(c *gin.Context) {
@@ -711,7 +695,7 @@ func (h *Handler) eventStream(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no")
 	for _, event := range h.app.EventHub().Recent() {
 		b, _ := json.Marshal(event)
-		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", b)
+		_, _ = fmt.Fprintf(c.Writer, "id: %d\ndata: %s\n\n", event.ID, b)
 	}
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
@@ -722,7 +706,7 @@ func (h *Handler) eventStream(c *gin.Context) {
 		select {
 		case event := <-ch:
 			b, _ := json.Marshal(event)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.ID, b)
 			return true
 		case <-ticker.C:
 			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
