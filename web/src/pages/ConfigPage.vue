@@ -20,9 +20,9 @@
         <h2 class="font-medium">DHCP</h2>
         <label class="flex items-center gap-2 text-sm"><input v-model="config.dhcp.enabled" type="checkbox" /> 启用 DHCP/ProxyDHCP</label>
         <select v-model="config.dhcp.mode" class="input w-full"><option value="proxy">ProxyDHCP</option><option value="dhcp">完整 DHCP</option></select>
-        <div v-if="config.dhcp.mode === 'proxy'" class="alert">ProxyDHCP 不分配 IP，客户端 IP、网关和 DNS 仍由现有路由器/DHCP 服务提供。</div>
-        <div v-else class="alert">完整 DHCP 会向局域网分配 IP，启动前请确认没有路由器或其他 DHCP 服务在同网段工作。</div>
-        <label class="label">普通 DHCP 客户端</label>
+        <div v-if="config.dhcp.mode === 'proxy'" class="alert">ProxyDHCP 只回应PXE启动信息，不分配IP信息，仍由路由器提供DHCP服务。</div>
+        <div v-else class="alert">完整DHCP会向局域网设备分配IP信息，不能和局域网内的其他DHCP服务器共存。</div>
+        <label class="label">普通 DHCP 客户端处理策略</label>
         <select v-model="config.dhcp.non_pxe_action" class="input w-full">
           <option value="network_only">仅分配网络参数</option>
           <option value="ignore">忽略普通客户端</option>

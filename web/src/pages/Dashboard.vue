@@ -22,36 +22,35 @@
       </div>
       <p v-if="message" class="mt-3 text-sm" :class="error ? 'text-red-600' : 'text-neutral-500'">{{ message }}</p>
     </section>
-    <section class="card p-5">
-      <div class="flex items-center justify-between">
+    <section class="card p-4">
+      <div class="flex items-center justify-between gap-3">
         <div>
-          <h2 class="text-lg font-semibold">实时事件</h2>
-          <p class="mt-1 text-sm text-neutral-500">与日志页面使用同一条实时事件流，最新事件显示在底部。</p>
+          <h2 class="font-semibold">实时事件</h2>
+          <p class="mt-0.5 text-xs text-neutral-500">最近事件摘要，完整内容见日志页面。</p>
         </div>
-        <span class="text-xs text-neutral-500">{{ connected ? '实时连接正常' : '连接重试中' }}</span>
+        <span class="shrink-0 text-xs text-neutral-500">{{ connected ? '实时连接正常' : '连接重试中' }}</span>
       </div>
-      <div class="mt-4 space-y-2">
-        <div v-for="event in recent" :key="event.id" class="rounded-md border border-neutral-200 p-3 text-sm">
-          <div class="flex items-center justify-between gap-3">
-            <span class="font-medium">{{ event.source }}</span>
-            <span class="text-xs text-neutral-500">{{ shortTime(event.time) }}</span>
-          </div>
-          <div class="mt-1 break-words text-neutral-700">{{ event.message }}</div>
+      <div class="mt-3 divide-y divide-neutral-100 rounded-md border border-neutral-200">
+        <div v-for="event in compactEvents" :key="event.id" class="grid min-h-8 grid-cols-[4.8rem_5.2rem_1fr] items-center gap-2 px-2.5 py-1.5 text-xs">
+          <span class="text-neutral-500">{{ shortTime(event.time) }}</span>
+          <span class="truncate font-medium text-neutral-700">{{ event.source }}</span>
+          <span class="truncate text-neutral-700" :title="event.message">{{ event.message }}</span>
         </div>
-        <div v-if="recent.length === 0" class="rounded-md border border-neutral-200 p-4 text-sm text-neutral-500">暂无事件。</div>
+        <div v-if="compactEvents.length === 0" class="px-2.5 py-2 text-xs text-neutral-500">暂无事件。</div>
       </div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../lib/api'
 import { useEventLog } from '../lib/eventLog'
 
 const labels: Record<string, string> = { dhcp: '完整 DHCP', proxy_dhcp_67: 'ProxyDHCP 发现', proxy_dhcp: 'ProxyDHCP 4011', tftp: 'TFTP', httpboot: 'HTTP Boot', torrent: 'Tracker' }
 const status = ref<any>()
 const { recent, connected, load: loadEvents, connect: connectEvents } = useEventLog()
+const compactEvents = computed(() => recent.value.slice(-6))
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
