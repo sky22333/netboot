@@ -79,15 +79,20 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 		}
 		root, target, err := resolveReadPath(settings, strings.TrimPrefix(r.URL.Path, "/"))
 		if err != nil {
+			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件路径非法: %s client=%s error=%s", r.URL.Path, clientIP(r), err.Error()))
 			http.Error(w, "非法路径", http.StatusForbidden)
 			return
 		}
+		rel, _ := filepath.Rel(root, target)
+		rel = filepath.ToSlash(rel)
 		info, err := os.Stat(target)
 		if err != nil {
+			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件不存在: %s -> %s client=%s", r.URL.Path, target, clientIP(r)))
 			http.NotFound(w, r)
 			return
 		}
 		if info.IsDir() {
+			events.Publish("info", "httpboot", fmt.Sprintf("HTTP 目录请求: %s -> %s client=%s", r.URL.Path, target, clientIP(r)))
 			if !settings.HTTPBoot.DirectoryListing {
 				http.Error(w, "目录浏览已关闭", http.StatusForbidden)
 				return
@@ -97,11 +102,11 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 		}
 		f, err := os.Open(target)
 		if err != nil {
+			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件不可读: %s -> %s client=%s error=%s", r.URL.Path, target, clientIP(r), err.Error()))
 			http.Error(w, "文件不可读", http.StatusForbidden)
 			return
 		}
 		defer f.Close()
-		rel, _ := filepath.Rel(root, target)
 		etag := fmt.Sprintf(`W/"%x-%x"`, info.ModTime().Unix(), info.Size())
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
@@ -112,9 +117,9 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 		}
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		http.ServeContent(rec, r, info.Name(), info.ModTime(), f)
-		if r.Method == http.MethodGet && isBootAsset(rel) && rec.status < 400 {
-			_ = store.AddEvent(r.Context(), "info", "httpboot", "客户端请求启动文件", map[string]any{"path": filepath.ToSlash(rel), "size": info.Size(), "client": clientIP(r)})
-			events.Publish("info", "httpboot", "客户端请求启动文件: "+filepath.ToSlash(rel))
+		if r.Method == http.MethodGet && rec.status < 400 {
+			_ = store.AddEvent(r.Context(), "info", "httpboot", "客户端请求 HTTP 文件", map[string]any{"path": rel, "size": info.Size(), "client": clientIP(r), "status": rec.status})
+			events.Publish("info", "httpboot", fmt.Sprintf("HTTP 文件已发送: %s size=%d client=%s", rel, info.Size(), clientIP(r)))
 		}
 	})
 }
@@ -162,15 +167,6 @@ func serveDirectory(w http.ResponseWriter, r *http.Request, dir, requestPath str
 		_, _ = fmt.Fprintf(w, `<li><a href="%s">%s</a></li>`, href, name)
 	}
 	_, _ = io.WriteString(w, "</ul></body>")
-}
-
-func isBootAsset(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".wim", ".iso", ".img", ".ima", ".vhd", ".vhdx", ".vmdk", ".dsk", ".efi", ".kpxe", ".pxe":
-		return true
-	default:
-		return false
-	}
 }
 
 func safeJoin(root, request string) (string, error) {

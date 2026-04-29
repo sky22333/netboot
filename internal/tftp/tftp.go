@@ -122,21 +122,26 @@ func parseRequestOptions(parts []string) map[string]string {
 
 func sendFile(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, name string, client net.Addr, options map[string]string) {
 	if script, ok := virtualIPXEScript(settings, name); ok {
+		events.Publish("info", "tftp", "虚拟 iPXE 脚本已就绪: "+name+" size="+strconv.Itoa(len(script))+" client="+client.String())
 		sendContent(ctx, settings, events, name, client, options, bytes.NewReader([]byte(script)), int64(len(script)))
 		return
 	}
 	path, err := resolveReadPath(settings, name)
 	if err != nil {
+		events.Publish("error", "tftp", "请求路径非法: "+name+" -> "+client.String()+" error="+err.Error())
 		sendErrorCode(client, errAccessViolation, "非法路径")
 		return
 	}
 	f, err := os.Open(path)
 	if err != nil {
+		events.Publish("error", "tftp", "文件不存在或不可读: "+name+" -> "+path+" client="+client.String()+" error="+err.Error())
 		sendErrorCode(client, errFileNotFound, "文件不存在")
 		return
 	}
 	defer f.Close()
-	sendContent(ctx, settings, events, name, client, options, f, fileSize(f))
+	size := fileSize(f)
+	events.Publish("info", "tftp", "文件已就绪: "+name+" -> "+path+" size="+strconv.FormatInt(size, 10)+" client="+client.String())
+	sendContent(ctx, settings, events, name, client, options, f, size)
 }
 
 func resolveReadPath(settings storage.ServiceSettings, name string) (string, error) {
