@@ -219,6 +219,9 @@ func run(ctx context.Context, settings storage.ServiceSettings, store *storage.S
 		if proxy && requestMessageType(req) == 1 {
 			offer := cloneWithMessageType(resp, 2)
 			sendResponse(conn, remote, req, offer, settings, name, port, proxy, events)
+			if requestIsIPXE(req) {
+				continue
+			}
 		}
 		sendResponse(conn, remote, req, resp, settings, name, port, proxy, events)
 	}
@@ -315,6 +318,14 @@ func requestMessageType(req []byte) byte {
 		return v[0]
 	}
 	return 0
+}
+
+func requestIsIPXE(req []byte) bool {
+	if len(req) < 240 {
+		return false
+	}
+	opts := parseOptions(req[240:])
+	return contains(opts[77], "iPXE") || contains(opts[60], "iPXE") || len(opts[175]) > 0
 }
 
 func responseMessageType(resp []byte) byte {
