@@ -47,7 +47,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../lib/api'
 import { useEventLog } from '../lib/eventLog'
 
-const labels: Record<string, string> = { dhcp: '完整 DHCP', proxy_dhcp_67: 'ProxyDHCP 发现', proxy_dhcp: 'ProxyDHCP 4011', tftp: 'TFTP', httpboot: 'HTTP Boot', torrent: 'Tracker' }
+const labels: Record<string, string> = { dhcp: '完整 DHCP', proxy_dhcp_67: 'ProxyDHCP 发现', proxy_dhcp: 'ProxyDHCP 4011', tftp: 'TFTP', httpboot: 'HTTP Boot', torrent: 'Tracker', smb: 'SMB 共享' }
 const status = ref<any>()
 const { recent, connected, load: loadEvents, connect: connectEvents } = useEventLog()
 const compactEvents = computed(() => recent.value.slice(-6))

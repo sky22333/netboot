@@ -34,9 +34,10 @@ type App struct {
 	Events    *observability.Hub
 	startedAt string
 
-	mu       sync.Mutex
-	services map[string]serviceHandle
-	admin    *http.Server
+	mu         sync.Mutex
+	services   map[string]serviceHandle
+	admin      *http.Server
+	smbRunning bool
 }
 
 type serviceHandle struct {
@@ -110,7 +111,7 @@ func (a *App) Status() any {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	services := map[string]string{
-		"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "torrent": "stopped",
+		"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "torrent": "stopped", "smb": "stopped",
 	}
 	for name, handle := range a.services {
 		select {
@@ -119,6 +120,9 @@ func (a *App) Status() any {
 		default:
 			services[name] = "running"
 		}
+	}
+	if a.smbRunning {
+		services["smb"] = "running"
 	}
 	return Status{AdminHTTP: a.Boot.Admin.AdminAddr, Services: services, StartedAt: a.startedAt}
 }
@@ -148,6 +152,7 @@ func (a *App) StartServices(ctx context.Context) error {
 		if err := smb.Apply(settings.SMB, true); err != nil {
 			a.Events.Publish("error", "smb", "SMB 共享启动失败: "+err.Error())
 		} else {
+			a.setSMBRunning(true)
 			a.Events.Publish("info", "smb", "SMB 共享已启用")
 		}
 	}
@@ -200,6 +205,7 @@ func (a *App) StopServices(ctx context.Context) {
 			a.Events.Publish("warning", "smb", "SMB 共享停止失败: "+err.Error())
 		}
 	}
+	a.setSMBRunning(false)
 	for name, handle := range handles {
 		select {
 		case <-handle.done:
@@ -212,4 +218,10 @@ func (a *App) StopServices(ctx context.Context) {
 	if len(handles) > 0 {
 		a.Events.Publish("info", "services", "所有服务已停止")
 	}
+}
+
+func (a *App) setSMBRunning(running bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.smbRunning = running
 }

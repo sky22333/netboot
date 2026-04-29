@@ -102,7 +102,6 @@ func NewRouter(app Backend) http.Handler {
 	protected.GET("/events/stream", h.eventStream)
 	protected.GET("/netbootxyz/files", h.netbootFiles)
 	protected.POST("/netbootxyz/download", h.netbootDownload)
-	protected.GET("/netbootxyz/status", h.netbootStatus)
 
 	r.GET("/dynamic.ipxe", h.dynamicProxy)
 	r.HEAD("/dynamic.ipxe", h.dynamicProxy)
@@ -893,10 +892,6 @@ func (h *Handler) netbootDownload(c *gin.Context) {
 	results := netboot.Download(c.Request.Context(), settings.NetbootXYZ, h.app.EventHub())
 	localVarsPath, created, err := netboot.EnsureLocalVars(settings.TFTP.Root, settings.Server.AdvertiseIP, settings.HTTPBoot.Addr, h.app.EventHub())
 	OK(c, gin.H{"downloads": results, "local_vars": gin.H{"file": netboot.LocalVarsFile, "path": localVarsPath, "created": created, "error": errorString(err)}})
-}
-
-func (h *Handler) netbootStatus(c *gin.Context) {
-	OK(c, gin.H{"message": "netboot.xyz 文件状态请以文件列表和实时日志为准"})
 }
 
 func errorString(err error) string {

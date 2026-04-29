@@ -445,10 +445,6 @@ func sendWithAck(conn net.PacketConn, client net.Addr, data []byte, block uint16
 	return false
 }
 
-func sendError(client net.Addr, msg string) {
-	sendErrorCode(client, errNotDefined, msg)
-}
-
 func sendErrorCode(client net.Addr, code uint16, msg string) {
 	conn, err := net.ListenPacket("udp", ":0")
 	if err != nil {

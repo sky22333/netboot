@@ -56,7 +56,6 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS boot_menu_items (id INTEGER PRIMARY KEY, menu_id INTEGER NOT NULL, sort_order INTEGER NOT NULL, title TEXT NOT NULL, boot_file TEXT, pxe_type TEXT, server_ip TEXT, enabled INTEGER NOT NULL DEFAULT 1, FOREIGN KEY(menu_id) REFERENCES boot_menus(id) ON DELETE CASCADE);`,
 		`CREATE TABLE IF NOT EXISTS client_actions (id INTEGER PRIMARY KEY, sort_order INTEGER NOT NULL, name TEXT NOT NULL, command TEXT NOT NULL, args TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL, fields_json TEXT);`,
-		`CREATE TABLE IF NOT EXISTS download_tasks (id INTEGER PRIMARY KEY, source TEXT NOT NULL, url TEXT NOT NULL, target_path TEXT NOT NULL, sha256 TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -206,6 +205,15 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	if settings.HTTPBoot.Root == "" {
 		settings.HTTPBoot.Root = defaults.HTTPBoot.Root
 	}
+	if settings.SMB.Root == "" {
+		settings.SMB.Root = defaults.SMB.Root
+	}
+	if settings.SMB.ShareName == "" {
+		settings.SMB.ShareName = defaults.SMB.ShareName
+	}
+	if settings.SMB.Permissions == "" {
+		settings.SMB.Permissions = defaults.SMB.Permissions
+	}
 	if settings.NetbootXYZ.DownloadDir == "" {
 		settings.NetbootXYZ.DownloadDir = defaults.NetbootXYZ.DownloadDir
 	}
@@ -274,6 +282,17 @@ func ValidateSettings(settings ServiceSettings) error {
 	}
 	if settings.TFTP.Root == "" {
 		return fmt.Errorf("tftp.root 不能为空")
+	}
+	if settings.SMB.Enabled {
+		if strings.TrimSpace(settings.SMB.Root) == "" {
+			return fmt.Errorf("smb.root 不能为空")
+		}
+		if strings.TrimSpace(settings.SMB.ShareName) == "" {
+			return fmt.Errorf("smb.share_name 不能为空")
+		}
+		if settings.SMB.Permissions != "read" && settings.SMB.Permissions != "full" {
+			return fmt.Errorf("smb.permissions 必须是 read 或 full")
+		}
 	}
 	if settings.DHCP.Enabled && settings.DHCP.Mode == "dhcp" {
 		start := net.ParseIP(settings.DHCP.PoolStart).To4()
@@ -506,16 +525,6 @@ func (s *Store) ensureDefaultActions(ctx context.Context) error {
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM client_actions`).Scan(&count)
 	if count > 0 {
 		return nil
-	}
-	actions := []ClientAction{
-		{SortOrder: 1, Name: "远程控制", Command: "tvnviewer.exe", Args: "%IP%", Enabled: true},
-		{SortOrder: 2, Name: "重启客户机", Command: "cmd", Args: "/c echo wpeutil reboot| nc64.exe -t %IP% 6086", Enabled: true},
-		{SortOrder: 3, Name: "关闭客户机", Command: "cmd", Args: "/c echo wpeutil shutdown| nc64.exe -t %IP% 6086", Enabled: true},
-	}
-	for _, a := range actions {
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO client_actions(sort_order,name,command,args,enabled) VALUES(?,?,?,?,?)`, a.SortOrder, a.Name, a.Command, a.Args, boolInt(a.Enabled)); err != nil {
-			return err
-		}
 	}
 	return nil
 }
