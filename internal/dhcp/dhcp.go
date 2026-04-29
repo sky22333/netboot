@@ -422,29 +422,28 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 	_ = store.AddEvent(ctx, "info", "dhcp", "收到客户端请求", map[string]any{"mac": mac, "arch": arch, "ipxe": isIPXE, "vendor": vendorClass, "user_class": userClass, "msg_type": msgType, "proxy": proxy})
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
-	menus, _ := store.ListMenus(ctx)
-	menu := findMenu(menus, "bios")
-	if isUEFIArch(arch) {
-		menu = findMenu(menus, "uefi")
-	}
 	if isIPXE {
 		boot := ipxeBootFile(settings, arch, opts)
 		events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应 iPXE 启动目标: %s", mac, boot))
 		return offerBootFile(req, settings, clientIP, boot, nil, proxy)
 	}
-	selected, hasSelection := pxeopt.SelectedType(opts[43])
-	if hasSelection {
-		for _, item := range menu.Items {
-			if parseHex(item.PXEType) == selected {
-				events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应菜单选择 %04x: %s", mac, selected, item.BootFile))
-				return offerBootFile(req, settings, clientIP, item.BootFile, nil, proxy)
+	if isUEFIArch(arch) {
+		menus, _ := store.ListMenus(ctx)
+		menu := findMenu(menus, "uefi")
+		selected, hasSelection := pxeopt.SelectedType(opts[43])
+		if hasSelection {
+			for _, item := range menu.Items {
+				if parseHex(item.PXEType) == selected {
+					events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应菜单选择 %04x: %s", mac, selected, item.BootFile))
+					return offerBootFile(req, settings, clientIP, item.BootFile, nil, proxy)
+				}
 			}
 		}
-	}
-	if menu.Enabled && !proxy && isUEFIArch(arch) {
-		opt43 := pxeopt.BuildOption43(menu, settings.Server.AdvertiseIP)
-		events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原生 PXE 菜单: %s", mac, menu.MenuType))
-		return offerBootFile(req, settings, clientIP, "", opt43, proxy)
+		if menu.Enabled && !proxy {
+			opt43 := pxeopt.BuildOption43(menu, settings.Server.AdvertiseIP)
+			events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原生 PXE 菜单: %s", mac, menu.MenuType))
+			return offerBootFile(req, settings, clientIP, "", opt43, proxy)
+		}
 	}
 	boot := executableBootFile(settings, arch)
 	events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原始 PXE 可执行启动文件: %s", mac, boot))
@@ -491,6 +490,14 @@ func httpBootURI(settings storage.ServiceSettings) string {
 	return fmt.Sprintf("http://%s:%s", settings.Server.AdvertiseIP, port)
 }
 
+func netbootExists(settings storage.ServiceSettings, name string) bool {
+	if settings.NetbootXYZ.DownloadDir == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(settings.NetbootXYZ.DownloadDir, name))
+	return err == nil && !info.IsDir()
+}
+
 func ipxeHasFeature(opts map[byte][]byte, feature byte) bool {
 	encap := parseOptions(opts[175])
 	v, ok := encap[feature]
@@ -506,14 +513,6 @@ func ipxeHasFeature(opts map[byte][]byte, feature byte) bool {
 		}
 	}
 	return false
-}
-
-func netbootExists(settings storage.ServiceSettings, name string) bool {
-	if settings.NetbootXYZ.DownloadDir == "" {
-		return false
-	}
-	info, err := os.Stat(filepath.Join(settings.NetbootXYZ.DownloadDir, name))
-	return err == nil && !info.IsDir()
 }
 
 func offerBootFile(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy bool) []byte {

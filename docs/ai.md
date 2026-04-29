@@ -84,8 +84,9 @@ data/
 客户端 PXE
 -> 现有 DHCP 分配 IP
 -> pxe ProxyDHCP 返回 next-server 和 filename
--> TFTP 下载 netboot.xyz.kpxe 或 netboot.xyz.efi
--> 进入 netboot.xyz 或自定义启动菜单
+-> TFTP 下载 BIOS/UEFI 可执行 iPXE 文件
+-> 进入本项目 iPXE 动态菜单
+-> 执行本地 boot.ipxe、netboot.xyz 或其他 HTTP 脚本
 ```
 
 完整 DHCP 链路：
@@ -102,8 +103,11 @@ data/
 - ProxyDHCP 同时监听 UDP 4011 和 67，用于兼容不同 PXE/iPXE 固件。
 - 对 DHCP DISCOVER 同时发送兼容的 OFFER 和 ACK，提升老旧固件兼容性。
 - 响应目标包含 `255.255.255.255:68`、按通告 IP/子网掩码计算的定向广播和必要时的客户端单播。
-- BIOS 优先使用 `netboot/netboot.xyz.kpxe`，UEFI 优先使用 `netboot/netboot.xyz.efi`。
+- BIOS 优先使用 `netboot/netboot.xyz.kpxe` 或 `netboot/netboot.xyz-undionly.kpxe`，UEFI 优先使用 `netboot/netboot.xyz.efi`。
 - 如果 netboot 文件不存在，回退到服务配置中的默认启动文件。
+- 不再提供 BIOS 原生菜单；老式 BIOS 默认加载可执行 iPXE 文件后进入 iPXE 动态菜单。
+- iPXE 动态菜单默认第一项为 `Run boot.ipxe`，执行 `data/boot/http/boot.ipxe`。
+- 下发给 PXE/iPXE 客户端的菜单标题和菜单项使用英文/ASCII，避免固件控制台乱码。
 
 ## 配置说明
 
@@ -208,10 +212,10 @@ GitHub Actions：
 
 完全离线时：
 
-1. 把 `netboot.xyz.kpxe`、`netboot.xyz-undionly.kpxe`、`netboot.xyz.efi` 放到 `data/boot/netboot`。
-2. 把 ISO/WIM/IMG/VHD、Linux 内核、initrd 和自动安装配置放到 `data/boot/http`。
-3. 在启动菜单中添加本地镜像路径，例如 `images/winpe.iso`。
-4. 不依赖公网 URL 的菜单才是真正离线可用菜单。
+1. 老式 BIOS 推荐把官方 `undionly.kpxe` 改名为 `netboot.xyz-undionly.kpxe`，放到 `data/boot/netboot`。
+2. 把 `boot.ipxe`、Linux 内核、initrd 和自动安装配置放到 `data/boot/http`。
+3. iPXE 菜单使用 `%dynamicboot%=boot.ipxe` 执行本地启动脚本，默认显示为 `Run boot.ipxe`。
+4. 不依赖公网 URL 的脚本才是真正离线可用脚本。
 
 注意：netboot.xyz 自身的在线菜单可能继续访问公网。完全离线部署应使用自定义本地菜单和本地镜像。
 

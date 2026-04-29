@@ -4,15 +4,11 @@
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 class="text-lg font-semibold">启动菜单</h1>
-          <p class="mt-1 text-sm text-neutral-500">管理 PXE 启动菜单。BIOS 和 ProxyDHCP 默认下发启动文件；UEFI 在完整 DHCP 模式下可使用原生菜单；进入 iPXE 后使用动态 HTTP 菜单。</p>
+          <p class="mt-1 text-sm text-neutral-500">管理 UEFI 原生菜单和 iPXE 动态菜单。BIOS 客户端默认先加载 iPXE，再进入这里的 iPXE 菜单。</p>
         </div>
         <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中...' : '保存菜单' }}</button>
       </div>
-      <div class="mt-4 grid gap-3 lg:grid-cols-3">
-        <div class="rounded-md border border-neutral-200 p-3">
-          <div class="text-sm font-medium">BIOS PXE</div>
-          <p class="mt-1 text-xs text-neutral-500">老式 BIOS 默认直接下发启动文件，避免原生菜单兼容问题。</p>
-        </div>
+      <div class="mt-4 grid gap-3 lg:grid-cols-2">
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">UEFI PXE</div>
           <p class="mt-1 text-xs text-neutral-500">完整 DHCP 可显示原生菜单；ProxyDHCP 默认下发启动文件。</p>
@@ -31,7 +27,7 @@
             <h2 class="font-semibold">{{ names[menu.menu_type] ?? menu.menu_type }}</h2>
             <span class="rounded-full border border-neutral-200 px-2 py-0.5 text-xs text-neutral-500">{{ modeText(menu.menu_type) }}</span>
           </div>
-          <p class="mt-1 text-sm text-neutral-500">{{ menuHint(menu.menu_type) }}</p>
+          <p class="mt-1 text-sm text-neutral-500">{{ menuHint(menu.menu_type) }} 菜单标题和显示名称建议使用英文，避免 PXE/iPXE 控制台乱码。</p>
         </div>
         <label class="flex items-center gap-2 text-sm"><input v-model="menu.enabled" type="checkbox" /> 启用</label>
       </div>
@@ -59,7 +55,7 @@
         <div class="space-y-2">
           <div v-for="item in menuItems(menu)" :key="item.id" class="grid gap-2 rounded-md border border-neutral-200 p-2 md:grid-cols-[1.2fr_1.6fr_.7fr_.9fr_auto]">
             <input v-model="item.title" class="input" placeholder="例如 netboot.xyz" />
-            <input v-model="item.boot_file" class="input" placeholder="例如 netboot/netboot.xyz.kpxe 或 %dynamicboot%=ipxefm" />
+            <input v-model="item.boot_file" class="input" placeholder="例如 %dynamicboot%=boot.ipxe 或 https://boot.netboot.xyz" />
             <input v-model="item.pxe_type" class="input" placeholder="8000" />
             <input v-model="item.server_ip" class="input" placeholder="%tftpserver%" />
             <label class="flex items-center gap-2 px-1 text-sm"><input v-model="item.enabled" type="checkbox" /> 启用</label>
@@ -81,7 +77,7 @@ const menus = ref<any[]>([])
 const saving = ref(false)
 const message = ref('')
 const error = ref(false)
-const names: Record<string, string> = { bios: 'BIOS 菜单', uefi: 'UEFI 菜单', ipxe: 'iPXE 菜单' }
+const names: Record<string, string> = { uefi: 'UEFI 菜单', ipxe: 'iPXE 菜单' }
 
 async function load() {
   const rows = await api<any[]>('/menus')
@@ -102,18 +98,16 @@ async function save() {
   }
 }
 function modeText(type: string) {
-  if (type === 'bios') return '老设备兼容'
   if (type === 'uefi') return '原生菜单可选'
   return '动态菜单'
 }
 function menuHint(type: string) {
-  if (type === 'bios') return 'BIOS 客户端默认使用启动文件；这里用于保留传统菜单项和兼容配置。'
   if (type === 'uefi') return 'UEFI 客户端在完整 DHCP 模式下可显示原生菜单，也可直接使用启动文件。'
-  return 'iPXE 菜单通过 HTTP 动态生成，可列出本地启动文件和 netboot.xyz。'
+  return 'iPXE 菜单通过 HTTP 动态生成，适合执行本地 boot.ipxe、netboot.xyz 或其他脚本。'
 }
 function menuNote(type: string) {
-  if (type === 'ipxe') return 'iPXE 菜单支持动态宏，例如 %dynamicboot%=ipxefm；路径建议使用 HTTP 可访问的相对路径或完整 URL。'
-  return '传统 PXE 菜单名称建议使用 ASCII；PXE 类型码需要保持唯一，服务器 IP 可用 %tftpserver% 表示当前通告 IP。'
+  if (type === 'ipxe') return 'iPXE 菜单支持动态宏，例如 %dynamicboot%=boot.ipxe；相对路径会从 HTTP Boot 目录读取。'
+  return 'UEFI 原生菜单名称建议使用英文；PXE 类型码需要保持唯一，服务器 IP 可用 %tftpserver% 表示当前通告 IP。'
 }
 function normalizeMenu(menu: any) {
   return { ...menu, items: Array.isArray(menu?.items) ? menu.items : [] }

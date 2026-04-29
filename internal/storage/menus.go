@@ -2,22 +2,19 @@ package storage
 
 import (
 	"context"
+	"errors"
 )
 
 func (s *Store) defaultMenus() []Menu {
 	return []Menu{
-		{MenuType: "bios", Enabled: true, Prompt: "按 F8 进入 BIOS 启动菜单", TimeoutSeconds: 6, Items: []MenuItem{
-			{SortOrder: 1, Title: "iPXE BIOS", BootFile: "ipxe.bios", PXEType: "8000", ServerIP: "%tftpserver%", Enabled: true},
-			{SortOrder: 2, Title: "本地硬盘启动", BootFile: "", PXEType: "0000", ServerIP: "0.0.0.0", Enabled: true},
-		}},
-		{MenuType: "uefi", Enabled: true, Prompt: "按 F8 进入 UEFI 启动菜单", TimeoutSeconds: 6, Items: []MenuItem{
+		{MenuType: "uefi", Enabled: true, Prompt: "UEFI Boot Menu", TimeoutSeconds: 6, Items: []MenuItem{
 			{SortOrder: 1, Title: "iPXE UEFI", BootFile: "ipxe.efi", PXEType: "8002", ServerIP: "%tftpserver%", Enabled: true},
-			{SortOrder: 2, Title: "本地硬盘启动", BootFile: "", PXEType: "0000", ServerIP: "0.0.0.0", Enabled: true},
+			{SortOrder: 2, Title: "Boot Local Disk", BootFile: "", PXEType: "0000", ServerIP: "0.0.0.0", Enabled: true},
 		}},
-		{MenuType: "ipxe", Enabled: true, Prompt: "iPXE 启动菜单", TimeoutSeconds: 6, Items: []MenuItem{
-			{SortOrder: 1, Title: "列出可启动文件", BootFile: "%dynamicboot%=ipxefm", PXEType: "0001", ServerIP: "%tftpserver%", Enabled: true},
+		{MenuType: "ipxe", Enabled: true, Prompt: "iPXE Boot Menu", TimeoutSeconds: 6, Items: []MenuItem{
+			{SortOrder: 1, Title: "Run boot.ipxe", BootFile: "%dynamicboot%=boot.ipxe", PXEType: "0001", ServerIP: "%tftpserver%", Enabled: true},
 			{SortOrder: 2, Title: "netboot.xyz", BootFile: "https://boot.netboot.xyz", PXEType: "8005", ServerIP: "%tftpserver%", Enabled: true},
-			{SortOrder: 3, Title: "本地硬盘启动", BootFile: "", PXEType: "0000", ServerIP: "0.0.0.0", Enabled: true},
+			{SortOrder: 3, Title: "Boot Local Disk", BootFile: "", PXEType: "0000", ServerIP: "0.0.0.0", Enabled: true},
 		}},
 	}
 }
@@ -43,7 +40,7 @@ func (s *Store) ensureMenu(ctx context.Context, menu Menu) error {
 }
 
 func (s *Store) ListMenus(ctx context.Context) ([]Menu, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,menu_type,enabled,prompt,timeout_seconds,randomize_timeout FROM boot_menus ORDER BY CASE menu_type WHEN 'bios' THEN 1 WHEN 'uefi' THEN 2 WHEN 'ipxe' THEN 3 ELSE 9 END`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,menu_type,enabled,prompt,timeout_seconds,randomize_timeout FROM boot_menus WHERE menu_type IN ('uefi','ipxe') ORDER BY CASE menu_type WHEN 'uefi' THEN 1 WHEN 'ipxe' THEN 2 ELSE 9 END`)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +105,9 @@ func (s *Store) SaveMenus(ctx context.Context, menus []Menu) error {
 		return err
 	}
 	for _, menu := range menus {
+		if !allowedMenuType(menu.MenuType) {
+			return errors.New("菜单类型无效")
+		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO boot_menus(menu_type,enabled,prompt,timeout_seconds,randomize_timeout) VALUES(?,?,?,?,?)`, menu.MenuType, boolInt(menu.Enabled), menu.Prompt, menu.TimeoutSeconds, boolInt(menu.RandomizeTimeout))
 		if err != nil {
 			return err
@@ -121,6 +121,10 @@ func (s *Store) SaveMenus(ctx context.Context, menus []Menu) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func allowedMenuType(menuType string) bool {
+	return menuType == "uefi" || menuType == "ipxe"
 }
 
 func boolInt(v bool) int {

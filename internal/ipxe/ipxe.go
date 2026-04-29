@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"pxe/internal/storage"
@@ -23,20 +21,6 @@ type Generator struct {
 	Store    *storage.Store
 }
 
-var supported = map[string]string{
-	".wim":   "wim",
-	".iso":   "iso",
-	".img":   "img",
-	".ima":   "img",
-	".efi":   "efi",
-	".vhd":   "disk",
-	".vhdx":  "disk",
-	".vmdk":  "disk",
-	".dsk":   "disk",
-	".ramos": "ramos",
-	".iqn":   "iqn",
-}
-
 func (g Generator) Generate(ctx context.Context, req Request) string {
 	httpURI := g.httpURI()
 	bootfile := strings.Trim(req.Params.Get("bootfile"), "\" ")
@@ -44,13 +28,13 @@ func (g Generator) Generate(ctx context.Context, req Request) string {
 		ip := req.Params.Get("myip")
 		mac := req.Params.Get("mymac")
 		if err := g.Store.AssignMACToIP(ctx, ip, mac); err != nil {
-			return fmt.Sprintf("#!ipxe\necho 绑定失败: %s\nsleep 8\nshell\n", sanitizeIPXE(err.Error()))
+			return fmt.Sprintf("#!ipxe\necho Bind failed: %s\nsleep 8\nshell\n", sanitizeIPXE(err.Error()))
 		}
-		return fmt.Sprintf("#!ipxe\necho 已绑定 %s 到 %s\necho 5 秒后重启\nsleep 5\nreboot\n", sanitizeIPXE(mac), sanitizeIPXE(ip))
+		return fmt.Sprintf("#!ipxe\necho Bound %s to %s\necho Rebooting in 5 seconds\nsleep 5\nreboot\n", sanitizeIPXE(mac), sanitizeIPXE(ip))
 	}
 	switch strings.ToLower(bootfile) {
-	case "", "ipxefm":
-		return g.fileMenu(httpURI)
+	case "":
+		return g.configMenu(ctx, httpURI)
 	case "ipxemenu":
 		return g.configMenu(ctx, httpURI)
 	case "getmyip":
@@ -61,7 +45,7 @@ func (g Generator) Generate(ctx context.Context, req Request) string {
 		return g.whoamiMenu(ctx, httpURI)
 	default:
 		if !validBootPath(bootfile) {
-			return fmt.Sprintf("#!ipxe\necho 启动文件路径无效: %s\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", sanitizeIPXE(bootfile), httpURI)
+			return fmt.Sprintf("#!ipxe\necho Invalid boot path: %s\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n", sanitizeIPXE(bootfile), httpURI)
 		}
 		return g.chainScript(bootfile, httpURI)
 	}
@@ -70,13 +54,13 @@ func (g Generator) Generate(ctx context.Context, req Request) string {
 func (g Generator) whoamiMenu(ctx context.Context, httpURI string) string {
 	clients, err := g.Store.UnassignedClients(ctx)
 	if err != nil {
-		return "#!ipxe\necho 读取待分配客户端失败\nsleep 5\nshell\n"
+		return "#!ipxe\necho Failed to read unassigned clients\nsleep 5\nshell\n"
 	}
 	if len(clients) == 0 {
-		return "#!ipxe\necho 没有待分配客户端，请先在 Web UI 批量添加。\nsleep 5\nexit\n"
+		return "#!ipxe\necho No unassigned clients. Add clients in Web UI first.\nsleep 5\nexit\n"
 	}
 	var b strings.Builder
-	b.WriteString("#!ipxe\nmenu 请选择这台机器对应的预分配名称\n")
+	b.WriteString("#!ipxe\nmenu Select this machine\n")
 	for _, c := range clients {
 		if c.IP == "" {
 			continue
@@ -121,7 +105,7 @@ func (g Generator) httpURI() string {
 func (g Generator) configMenu(ctx context.Context, httpURI string) string {
 	menus, err := g.Store.ListMenus(ctx)
 	if err != nil {
-		return "#!ipxe\necho 读取菜单失败\nsleep 5\nexit\n"
+		return "#!ipxe\necho Failed to read boot menu\nsleep 5\nexit\n"
 	}
 	var menu storage.Menu
 	for _, m := range menus {
@@ -131,7 +115,7 @@ func (g Generator) configMenu(ctx context.Context, httpURI string) string {
 		}
 	}
 	if !menu.Enabled {
-		return "#!ipxe\necho iPXE 菜单已禁用\nsanboot --no-describe --drive 0x80\n"
+		return "#!ipxe\necho iPXE menu disabled\nsanboot --no-describe --drive 0x80\n"
 	}
 	var b strings.Builder
 	b.WriteString("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\n")
@@ -152,14 +136,14 @@ func (g Generator) configMenu(ctx context.Context, httpURI string) string {
 		actions = append(actions, menuAction{name: name, script: actionFor(item.BootFile, httpURI)})
 	}
 	if len(actions) == 0 {
-		b.WriteString("item local 从本地硬盘启动\n")
+		b.WriteString("item local Boot Local Disk\n")
 		actions = append(actions, menuAction{name: "local", script: "sanboot --no-describe --drive 0x80"})
 	}
 	b.WriteString("choose --timeout ${menu-timeout} selected || goto local\ngoto ${selected}\n\n")
 	for _, action := range actions {
 		fmt.Fprintf(&b, ":%s\n%s || goto failed\ngoto end\n\n", action.name, action.script)
 	}
-	b.WriteString(":local\nsanboot --no-describe --drive 0x80 || goto failed\n\n:failed\necho 启动失败，请检查启动文件、HTTP Boot 地址和网络连通性。\nsleep 5\nshell\n:end\nexit\n")
+	b.WriteString(":local\nsanboot --no-describe --drive 0x80 || goto failed\n\n:failed\necho Boot failed. Check boot file, HTTP Boot address and network.\nsleep 5\nshell\n:end\nexit\n")
 	return b.String()
 }
 
@@ -180,61 +164,20 @@ func actionFor(bootFile, httpURI string) string {
 	return fmt.Sprintf("chain %s/%s", httpURI, escapePath(strings.TrimLeft(bootFile, "/")))
 }
 
-func (g Generator) fileMenu(httpURI string) string {
-	var files []string
-	root := g.Settings.HTTPBoot.Root
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		ext := strings.ToLower(filepath.Ext(path))
-		if _, ok := supported[ext]; !ok {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err == nil {
-			files = append(files, filepath.ToSlash(rel))
-		}
-		return nil
-	})
-	sort.Strings(files)
-	if len(files) == 0 {
-		return "#!ipxe\necho HTTP 目录中没有可启动文件\nsleep 5\nsanboot --no-describe --drive 0x80\n"
-	}
-	var b strings.Builder
-	b.WriteString("#!ipxe\nmenu 可启动文件\n")
-	for _, f := range files {
-		fmt.Fprintf(&b, "item %q %q\n", f, f)
-	}
-	fmt.Fprintf(&b, "choose --timeout 30000 selected || exit\nchain %s/dynamic.ipxe?bootfile=${selected:uristring}\n", httpURI)
-	return b.String()
-}
-
 func (g Generator) chainScript(bootfile, httpURI string) string {
 	if strings.HasPrefix(bootfile, "http://") || strings.HasPrefix(bootfile, "https://") {
 		return directChainScript(bootfile, httpURI)
 	}
 	ext := strings.ToLower(filepath.Ext(bootfile))
-	if ext == ".ipxe" {
-		target := fmt.Sprintf("%s/%s", httpURI, escapePath(strings.TrimLeft(bootfile, "/")))
-		return directChainScript(target, httpURI)
+	if ext != ".ipxe" && ext != ".efi" {
+		return fmt.Sprintf("#!ipxe\necho Unsupported direct boot file: %s\necho Use boot.ipxe for explicit boot steps.\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n", sanitizeIPXE(bootfile), httpURI)
 	}
-	typ, ok := supported[ext]
-	if !ok {
-		return fmt.Sprintf("#!ipxe\necho 不支持的文件类型: %s\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", bootfile, httpURI)
-	}
-	if !strings.HasPrefix(bootfile, "/") {
-		bootfile = "/" + bootfile
-	}
-	escapedBootFile := "/" + escapePath(strings.TrimLeft(bootfile, "/"))
-	if typ == "efi" {
-		return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nchain %s%s || goto failed\nboot || goto failed\n:failed\necho EFI 文件启动失败\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", httpURI, escapedBootFile, httpURI)
-	}
-	return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nset booturl %s\nset bootfile %s\nchain http://${booturl}/Boot/ipxefm/types/%s || goto failed\n:failed\necho 启动处理器失败，请确认 Boot/ipxefm/types/%s 存在。\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", strings.TrimPrefix(httpURI, "http://"), escapedBootFile, typ, typ, httpURI)
+	target := fmt.Sprintf("%s/%s", httpURI, escapePath(strings.TrimLeft(bootfile, "/")))
+	return directChainScript(target, httpURI)
 }
 
 func directChainScript(target, httpURI string) string {
-	return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nchain %s || goto failed\ngoto end\n:failed\necho iPXE 脚本启动失败，请检查地址和脚本内容。\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n:end\nexit\n", target, httpURI)
+	return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nchain %s || goto failed\ngoto end\n:failed\necho iPXE script failed. Check URL and script content.\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n:end\nexit\n", target, httpURI)
 }
 
 func escapePath(path string) string {
