@@ -211,7 +211,14 @@ func (g Generator) fileMenu(httpURI string) string {
 }
 
 func (g Generator) chainScript(bootfile, httpURI string) string {
+	if strings.HasPrefix(bootfile, "http://") || strings.HasPrefix(bootfile, "https://") {
+		return directChainScript(bootfile, httpURI)
+	}
 	ext := strings.ToLower(filepath.Ext(bootfile))
+	if ext == ".ipxe" {
+		target := fmt.Sprintf("%s/%s", httpURI, escapePath(strings.TrimLeft(bootfile, "/")))
+		return directChainScript(target, httpURI)
+	}
 	typ, ok := supported[ext]
 	if !ok {
 		return fmt.Sprintf("#!ipxe\necho 不支持的文件类型: %s\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", bootfile, httpURI)
@@ -224,6 +231,10 @@ func (g Generator) chainScript(bootfile, httpURI string) string {
 		return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nchain %s%s || goto failed\nboot || goto failed\n:failed\necho EFI 文件启动失败\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", httpURI, escapedBootFile, httpURI)
 	}
 	return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nset booturl %s\nset bootfile %s\nchain http://${booturl}/Boot/ipxefm/types/%s || goto failed\n:failed\necho 启动处理器失败，请确认 Boot/ipxefm/types/%s 存在。\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxefm\n", strings.TrimPrefix(httpURI, "http://"), escapedBootFile, typ, typ, httpURI)
+}
+
+func directChainScript(target, httpURI string) string {
+	return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nchain %s || goto failed\ngoto end\n:failed\necho iPXE 脚本启动失败，请检查地址和脚本内容。\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n:end\nexit\n", target, httpURI)
 }
 
 func escapePath(path string) string {

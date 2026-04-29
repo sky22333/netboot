@@ -52,8 +52,6 @@ data/
 └─ exports/
 ```
 
-`boot/netboot` 会通过 TFTP 的 `netboot/...` 和 HTTP 的 `/netboot/...` 暴露出来，不需要复制到 `boot/tftp` 或 `boot/http`。完全离线时请把 netboot.xyz 启动文件放在 `boot/netboot`，把 ISO/WIM/VHD/内核等大文件放在 `boot/http`。
-
 更多内容见 [docs](./docs)。
 
 ## 页面预览

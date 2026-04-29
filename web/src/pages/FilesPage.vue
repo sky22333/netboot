@@ -4,7 +4,7 @@
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 class="text-lg font-semibold">启动文件管理</h1>
-          <p class="mt-1 text-sm text-neutral-500">管理 PXE 启动会用到的文件。大镜像放 HTTP Boot，第一阶段固件放 TFTP。</p>
+          <p class="mt-1 text-sm text-neutral-500">管理 PXE 启动文件。HTTP Boot 对应 data/boot/http，TFTP 启动对应 data/boot/tftp。</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button class="btn" :class="root === 'http' ? 'btn-primary' : ''" @click="switchRoot('http')">HTTP Boot</button>
@@ -16,15 +16,15 @@
       <div class="mt-4 grid gap-3 lg:grid-cols-3">
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">HTTP Boot 目录</div>
-          <p class="mt-1 text-xs text-neutral-500">放置 ISO、WIM、VHD、内核、initrd、自动化安装文件，iPXE 菜单会通过 HTTP 读取。</p>
+          <p class="mt-1 text-xs text-neutral-500">对应 data/boot/http。放 boot.ipxe、linux、initrd.gz、ISO/WIM 等，通过 http://通告IP/文件名 访问。</p>
         </div>
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">TFTP 启动目录</div>
-          <p class="mt-1 text-xs text-neutral-500">放置 ipxe.bios、ipxe.efi、boot.ipxe 等小文件，传统 PXE 第一阶段从这里加载。</p>
+          <p class="mt-1 text-xs text-neutral-500">对应 data/boot/tftp。放 ipxe.bios、ipxe.efi 等第一阶段启动文件，通过 TFTP 加载。</p>
         </div>
         <div class="rounded-md border border-neutral-200 p-3">
           <div class="text-sm font-medium">netboot.xyz 文件</div>
-          <p class="mt-1 text-xs text-neutral-500">推荐在 netboot.xyz 页面下载，系统会在 DHCP 阶段优先使用已下载的可执行文件。</p>
+          <p class="mt-1 text-xs text-neutral-500">对应 data/boot/netboot。推荐在 netboot.xyz 页面下载，BIOS/UEFI 会按规则优先使用。</p>
         </div>
       </div>
     </div>
@@ -33,7 +33,7 @@
       <div class="card overflow-hidden">
         <div class="flex flex-col gap-3 border-b border-neutral-200 p-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <div class="text-sm text-neutral-500">当前位置</div>
+            <div class="text-sm text-neutral-500">当前位置 · {{ rootDescription }}</div>
             <div class="mt-1 flex flex-wrap items-center gap-1 text-sm">
               <button class="rounded px-2 py-1 font-medium hover:bg-neutral-100" @click="goPath('.')">{{ rootLabel }}</button>
               <template v-for="crumb in crumbs" :key="crumb.path">
@@ -110,6 +110,7 @@ const error = ref(false)
 const busy = ref(false)
 
 const rootLabel = computed(() => root.value === 'http' ? 'HTTP Boot' : 'TFTP 启动')
+const rootDescription = computed(() => root.value === 'http' ? 'data/boot/http' : 'data/boot/tftp')
 const sortedFiles = computed(() => [...files.value].sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name)))
 const crumbs = computed(() => {
   if (currentPath.value === '.') return []
