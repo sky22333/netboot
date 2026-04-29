@@ -101,13 +101,14 @@ data/
 关键实现：
 
 - ProxyDHCP 同时监听 UDP 4011 和 67，用于兼容不同 PXE/iPXE 固件。
-- 对 DHCP DISCOVER 同时发送兼容的 OFFER 和 ACK，提升老旧固件兼容性。
+- ProxyDHCP 对普通 PXE DISCOVER 保持兼容响应；对 iPXE DISCOVER 只发送 OFFER，REQUEST 再发送 ACK，更符合 iPXE 状态机。
 - 响应目标包含 `255.255.255.255:68`、按通告 IP/子网掩码计算的定向广播和必要时的客户端单播。
-- BIOS 优先使用 `netboot/netboot.xyz.kpxe` 或 `netboot/netboot.xyz-undionly.kpxe`，UEFI 优先使用 `netboot/netboot.xyz.efi`。
+- BIOS 启动文件优先级为 `netboot/netboot.xyz.kpxe`、`netboot/netboot.xyz-undionly.kpxe`、服务配置里的 BIOS 默认启动文件；UEFI 优先使用 `netboot/netboot.xyz.efi`。
 - 如果 netboot 文件不存在，回退到服务配置中的默认启动文件。
 - 不再提供 BIOS 原生菜单；老式 BIOS 默认加载可执行 iPXE 文件后进入 iPXE 动态菜单。
 - iPXE 动态菜单默认第一项为 `Run boot.ipxe`，执行 `data/boot/http/boot.ipxe`。
 - 下发给 PXE/iPXE 客户端的菜单标题和菜单项使用英文/ASCII，避免固件控制台乱码。
+- netboot.xyz 下载完成后会按需生成 `data/boot/tftp/local-vars.ipxe`；文件已存在时不覆盖。该脚本提供英文菜单，可从公网镜像或通告 IP 对应的内网 HTTP 路径启动 Debian 12 和 Alpine Linux，内网地址会自动使用当前 HTTP Boot 端口。
 
 ## 配置说明
 

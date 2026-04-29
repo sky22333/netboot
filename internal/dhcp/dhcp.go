@@ -8,10 +8,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
+	"pxe/internal/booturl"
 	"pxe/internal/observability"
 	"pxe/internal/pxeopt"
 	"pxe/internal/storage"
@@ -482,23 +482,9 @@ func executableBootFile(settings storage.ServiceSettings, arch string) string {
 
 func ipxeBootFile(settings storage.ServiceSettings, arch string, opts map[byte][]byte) string {
 	if ipxeHasFeature(opts, 0x13) {
-		return fmt.Sprintf("%s/dynamic.ipxe?bootfile=ipxemenu", httpBootURI(settings))
+		return fmt.Sprintf("%s/dynamic.ipxe?bootfile=ipxemenu", booturl.HTTPBaseWithListenHost(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr))
 	}
 	return executableBootFile(settings, arch)
-}
-
-func httpBootURI(settings storage.ServiceSettings) string {
-	addr := settings.HTTPBoot.Addr
-	port := "80"
-	if strings.HasPrefix(addr, ":") && len(addr) > 1 {
-		port = addr[1:]
-	} else if host, p, err := net.SplitHostPort(addr); err == nil {
-		if host != "" && host != "0.0.0.0" {
-			return fmt.Sprintf("http://%s:%s", host, p)
-		}
-		port = p
-	}
-	return fmt.Sprintf("http://%s:%s", settings.Server.AdvertiseIP, port)
 }
 
 func netbootExists(settings storage.ServiceSettings, name string) bool {

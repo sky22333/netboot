@@ -8,6 +8,7 @@
       <div>来源：{{ info.base_url }}</div>
       <div>保存目录：{{ info.download_dir }}</div>
       <div>文件：{{ info.files?.join(', ') }}</div>
+      <div v-if="info.local_vars" class="mt-2 break-all">本地钩子：{{ info.local_vars.path }} · {{ info.local_vars.exists ? '已存在' : '未生成' }}</div>
     </div>
     <div v-if="localFiles.length" class="mt-4 grid gap-2 md:grid-cols-3">
       <div v-for="item in localFiles" :key="item.file" class="rounded-md border p-3 text-sm">
@@ -18,6 +19,10 @@
       </div>
     </div>
     <div class="mt-4 space-y-2">
+      <div v-if="localVarsResult" class="rounded-md border p-3 text-sm">
+        <div class="font-medium">local-vars.ipxe - {{ localVarsResult.error ? localVarsResult.error : (localVarsResult.created ? '已生成' : '已存在，已跳过') }}</div>
+        <div class="mt-1 break-all text-xs text-neutral-500">{{ localVarsResult.path }}</div>
+      </div>
       <div v-for="r in results" :key="r.file" class="rounded-md border p-3 text-sm">
         <div class="font-medium">{{ r.file }} - {{ r.ok ? (r.existing ? '已存在，已跳过' : '下载完成') : r.error }}</div>
         <div v-if="r.sha256" class="mt-1 break-all text-xs text-neutral-500">SHA256：{{ r.sha256 }}</div>
@@ -33,6 +38,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
 const info = ref<any>()
 const results = ref<any[]>([])
+const localVarsResult = ref<any>()
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
@@ -44,8 +50,9 @@ async function download() {
   busy.value = true
   error.value = false
   try {
-    const rows = await api<any[]>('/netbootxyz/download', { method: 'POST' })
-    results.value = Array.isArray(rows) ? rows : []
+    const res = await api<any>('/netbootxyz/download', { method: 'POST' })
+    results.value = Array.isArray(res?.downloads) ? res.downloads : []
+    localVarsResult.value = res?.local_vars
     message.value = '下载任务已完成。'
     await load()
   } catch (e) {

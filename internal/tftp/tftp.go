@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"pxe/internal/booturl"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
 )
@@ -212,38 +213,24 @@ func virtualIPXEScript(settings storage.ServiceSettings, name string) (string, b
 	if clean != "boot.ipxe" && clean != "dynamic.ipxe" && clean != "ipxemenu.ipxe" {
 		return "", false
 	}
-	httpURI := httpURI(settings)
+	httpURI := booturl.HTTPBaseWithListenHost(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr)
 	server := settings.Server.AdvertiseIP
 	return fmt.Sprintf(`#!ipxe
 isset ${net0/ip} || dhcp || goto failed
 chain %s/dynamic.ipxe?bootfile=ipxemenu || goto tftp_fallback
 
 :tftp_fallback
-echo HTTP 启动不可用，尝试通过 TFTP 启动 netboot.xyz
+echo HTTP boot is unavailable, trying TFTP netboot.xyz
 iseq ${platform} efi && chain tftp://%s/netboot/netboot.xyz.efi || chain tftp://%s/netboot/netboot.xyz.kpxe || chain tftp://%s/netboot/netboot.xyz-undionly.kpxe || goto local
 
 :local
 sanboot --no-describe --drive 0x80 || goto failed
 
 :failed
-echo PXE 启动失败，请检查 HTTP/TFTP 服务、防火墙和 netboot.xyz 文件。
+echo PXE boot failed. Check HTTP/TFTP service, firewall and netboot.xyz files.
 sleep 5
 shell
 `, httpURI, server, server, server), true
-}
-
-func httpURI(settings storage.ServiceSettings) string {
-	addr := settings.HTTPBoot.Addr
-	port := "80"
-	if strings.HasPrefix(addr, ":") && len(addr) > 1 {
-		port = addr[1:]
-	} else if host, p, err := net.SplitHostPort(addr); err == nil {
-		if host != "" && host != "0.0.0.0" {
-			return fmt.Sprintf("http://%s:%s", host, p)
-		}
-		port = p
-	}
-	return fmt.Sprintf("http://%s:%s", settings.Server.AdvertiseIP, port)
 }
 
 func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, name string, client net.Addr, options map[string]string) {

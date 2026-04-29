@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"pxe/internal/booturl"
 	"pxe/internal/config"
 	"pxe/internal/dhcp"
 	"pxe/internal/ipxe"
@@ -696,15 +697,8 @@ func (h *Handler) createTorrent(c *gin.Context) {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
 	}
-	httpAddr := settings.HTTPBoot.Addr
-	port := "80"
-	if strings.HasPrefix(httpAddr, ":") {
-		port = strings.TrimPrefix(httpAddr, ":")
-	} else if _, p, err := net.SplitHostPort(httpAddr); err == nil {
-		port = p
-	}
 	rel, _ := filepath.Rel(root, target)
-	webSeed := "http://" + settings.Server.AdvertiseIP + ":" + port + "/" + filepath.ToSlash(rel)
+	webSeed := booturl.HTTPBootBase(settings) + "/" + filepath.ToSlash(rel)
 	announce := "http://" + settings.Server.AdvertiseIP + ":6969/announce"
 	if settings.Torrent.Addr != "" {
 		if strings.HasPrefix(settings.Torrent.Addr, ":") {
@@ -781,17 +775,32 @@ func (h *Handler) netbootFiles(c *gin.Context) {
 		}
 		local = append(local, item)
 	}
-	OK(c, gin.H{"base_url": settings.NetbootXYZ.BaseURL, "files": settings.NetbootXYZ.Files, "download_dir": settings.NetbootXYZ.DownloadDir, "local": local})
+	localVarsPath := filepath.Join(settings.TFTP.Root, netboot.LocalVarsFile)
+	localVars := gin.H{"file": netboot.LocalVarsFile, "path": localVarsPath, "exists": false}
+	if info, err := os.Stat(localVarsPath); err == nil && !info.IsDir() {
+		localVars["exists"] = true
+		localVars["size"] = info.Size()
+		localVars["mod_time"] = info.ModTime()
+	}
+	OK(c, gin.H{"base_url": settings.NetbootXYZ.BaseURL, "files": settings.NetbootXYZ.Files, "download_dir": settings.NetbootXYZ.DownloadDir, "local": local, "local_vars": localVars})
 }
 
 func (h *Handler) netbootDownload(c *gin.Context) {
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
 	results := netboot.Download(c.Request.Context(), settings.NetbootXYZ, h.app.EventHub())
-	OK(c, results)
+	localVarsPath, created, err := netboot.EnsureLocalVars(settings.TFTP.Root, settings.Server.AdvertiseIP, settings.HTTPBoot.Addr, h.app.EventHub())
+	OK(c, gin.H{"downloads": results, "local_vars": gin.H{"file": netboot.LocalVarsFile, "path": localVarsPath, "created": created, "error": errorString(err)}})
 }
 
 func (h *Handler) netbootStatus(c *gin.Context) {
-	OK(c, gin.H{"message": "下载任务为同步执行，历史记录将在后续版本写入 download_tasks"})
+	OK(c, gin.H{"message": "netboot.xyz 文件状态请以文件列表和实时日志为准"})
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (h *Handler) dynamicProxy(c *gin.Context) {

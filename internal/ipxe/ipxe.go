@@ -3,11 +3,11 @@ package ipxe
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
 
+	"pxe/internal/booturl"
 	"pxe/internal/storage"
 )
 
@@ -89,17 +89,7 @@ func validBootPath(v string) bool {
 }
 
 func (g Generator) httpURI() string {
-	addr := g.Settings.HTTPBoot.Addr
-	port := "80"
-	if strings.HasPrefix(addr, ":") && len(addr) > 1 {
-		port = addr[1:]
-	} else if host, p, err := net.SplitHostPort(addr); err == nil {
-		if host != "" && host != "0.0.0.0" {
-			return fmt.Sprintf("http://%s:%s", host, p)
-		}
-		port = p
-	}
-	return fmt.Sprintf("http://%s:%s", g.Settings.Server.AdvertiseIP, port)
+	return booturl.HTTPBaseWithListenHost(g.Settings.Server.AdvertiseIP, g.Settings.HTTPBoot.Addr)
 }
 
 func (g Generator) configMenu(ctx context.Context, httpURI string) string {
