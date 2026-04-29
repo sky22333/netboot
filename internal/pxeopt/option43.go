@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"pxe/internal/bootmenu"
 	"pxe/internal/storage"
 )
 
@@ -81,7 +82,7 @@ func BuildOption43(menu storage.Menu, serverIP string) []byte {
 		prompt = prompt[:253]
 	}
 	prompt = append(prompt, 0)
-	out = append(out, 10, byte(len(prompt)+1), byte(clamp(menu.TimeoutSeconds, 0, 255)))
+	out = append(out, 10, byte(len(prompt)+1), byte(bootmenu.TimeoutSeconds(menu)))
 	out = append(out, prompt...)
 	out = append(out, 0xff)
 	return out
@@ -95,16 +96,6 @@ func asciiBytes(s string) []byte {
 		}
 	}
 	return out
-}
-
-func clamp(v, min, max int) int {
-	if v < min {
-		return min
-	}
-	if v > max {
-		return max
-	}
-	return v
 }
 
 func SelectedType(option43 []byte) (uint16, bool) {

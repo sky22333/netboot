@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"pxe/internal/bootmenu"
 	"pxe/internal/booturl"
 	"pxe/internal/storage"
 )
@@ -109,7 +110,7 @@ func (g Generator) configMenu(ctx context.Context, httpURI string) string {
 	}
 	var b strings.Builder
 	b.WriteString("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\n")
-	fmt.Fprintf(&b, "set bootserver %s\nset menu-timeout %d\nmenu %s\n", httpURI, menu.TimeoutSeconds*1000, sanitizeIPXE(menu.Prompt))
+	fmt.Fprintf(&b, "set bootserver %s\nset menu-timeout %d\nmenu %s\n", httpURI, bootmenu.TimeoutMillis(menu), sanitizeIPXE(menu.Prompt))
 	type menuAction struct {
 		name   string
 		script string

@@ -232,6 +232,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, Folder, FolderPlus, Globe2, HardDrive, Info, MoveRight, Pencil, RefreshCw, Save, Share2, Trash2, Upload, X } from 'lucide-vue-next'
 import { api, upload } from '../lib/api'
+import type { ServiceConfig } from '../lib/types'
 
 type RootKey = 'http' | 'tftp' | 'netboot'
 
@@ -248,11 +249,6 @@ type FileListResponse = {
   path: string
   base_path: string
   files: FileEntry[]
-}
-
-type ServiceConfig = {
-  server: { advertise_ip: string }
-  httpboot: { addr: string }
 }
 
 const roots = [

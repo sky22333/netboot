@@ -129,15 +129,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
-
-type ServiceConfig = {
-  server: { listen_ip: string; advertise_ip: string }
-  dhcp: { enabled: boolean; mode: string; non_pxe_action: string; pool_start: string; pool_end: string; subnet_mask: string; router: string; dns: string[]; lease_time_seconds: number; detect_conflicts: boolean }
-  tftp: { enabled: boolean; root: string; allow_upload: boolean; max_transfers: number; block_size_max: number; retry_count: number; timeout_seconds: number; max_upload_bytes: number }
-  httpboot: { enabled: boolean; addr: string; root: string; directory_listing: boolean; range_requests: boolean }
-  smb: { enabled: boolean; root: string; share_name: string; permissions: string }
-  torrent: { enabled: boolean; addr: string }
-}
+import type { ServiceConfig } from '../lib/types'
 
 const config = ref<ServiceConfig | null>(null)
 const message = ref('')

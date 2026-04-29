@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,13 +217,6 @@ func run(ctx context.Context, settings storage.ServiceSettings, store *storage.S
 		if len(resp) == 0 {
 			continue
 		}
-		if proxy && requestMessageType(req) == 1 {
-			offer := cloneWithMessageType(resp, 2)
-			sendResponse(conn, remote, req, offer, settings, name, port, proxy, events)
-			if requestIsIPXE(req) {
-				continue
-			}
-		}
 		sendResponse(conn, remote, req, resp, settings, name, port, proxy, events)
 	}
 }
@@ -310,24 +304,6 @@ func validResponseAddr(addr net.Addr) bool {
 	return udp.IP != nil && !udp.IP.Equal(net.IPv4zero)
 }
 
-func requestMessageType(req []byte) byte {
-	if len(req) < 240 {
-		return 0
-	}
-	if v := parseOptions(req[240:])[53]; len(v) > 0 {
-		return v[0]
-	}
-	return 0
-}
-
-func requestIsIPXE(req []byte) bool {
-	if len(req) < 240 {
-		return false
-	}
-	opts := parseOptions(req[240:])
-	return contains(opts[77], "iPXE") || contains(opts[60], "iPXE") || len(opts[175]) > 0
-}
-
 func responseMessageType(resp []byte) byte {
 	if len(resp) < 240 {
 		return 0
@@ -336,34 +312,6 @@ func responseMessageType(resp []byte) byte {
 		return v[53][0]
 	}
 	return 0
-}
-
-func cloneWithMessageType(resp []byte, msgType byte) []byte {
-	out := append([]byte(nil), resp...)
-	if len(out) < 240 || string(out[236:240]) != magicCookie {
-		return out
-	}
-	for i := 240; i < len(out); {
-		code := out[i]
-		i++
-		if code == 0 {
-			continue
-		}
-		if code == 255 || i >= len(out) {
-			return out
-		}
-		ln := int(out[i])
-		i++
-		if i+ln > len(out) {
-			return out
-		}
-		if code == 53 && ln == 1 {
-			out[i] = msgType
-			return out
-		}
-		i += ln
-	}
-	return out
 }
 
 func buildResponse(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, req []byte, proxy bool, pool *leasePool) []byte {
@@ -429,7 +377,11 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 		events.Publish("info", "dhcp", fmt.Sprintf("向普通 DHCP 客户端 %s 分配网络参数: ip=%s vendor=%q", mac, clientIP, vendorClass))
 		return offerNetworkConfig(req, settings, clientIP)
 	}
-	store.UpsertClientSeen(ctx, mac, clientIP, arch, "pxe")
+	status := "pxe"
+	if isIPXE {
+		status = "ipxe"
+	}
+	store.UpsertClientSeen(ctx, mac, clientIP, arch, status)
 	_ = store.AddEvent(ctx, "info", "dhcp", "收到客户端请求", map[string]any{"mac": mac, "arch": arch, "ipxe": isIPXE, "vendor": vendorClass, "user_class": userClass, "msg_type": msgType, "proxy": proxy})
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
@@ -446,7 +398,7 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 			for _, item := range menu.Items {
 				if parseHex(item.PXEType) == selected {
 					events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应菜单选择 %04x: %s", mac, selected, item.BootFile))
-					return offerBootFile(req, settings, clientIP, item.BootFile, nil, proxy)
+					return offerBootFileWithServer(req, settings, clientIP, item.BootFile, nil, proxy, item.ServerIP)
 				}
 			}
 		}
@@ -513,17 +465,25 @@ func ipxeHasFeature(opts map[byte][]byte, feature byte) bool {
 }
 
 func offerBootFile(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy bool) []byte {
-	return offerResponse(req, settings, yiaddr, bootFile, opt43, proxy, true)
+	return offerBootFileWithServer(req, settings, yiaddr, bootFile, opt43, proxy, "")
+}
+
+func offerBootFileWithServer(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy bool, nextServer string) []byte {
+	return offerResponse(req, settings, yiaddr, bootFile, opt43, proxy, true, nextServer)
 }
 
 func offerNetworkConfig(req []byte, settings storage.ServiceSettings, yiaddr string) []byte {
-	return offerResponse(req, settings, yiaddr, "", nil, false, false)
+	return offerResponse(req, settings, yiaddr, "", nil, false, false, "")
 }
 
-func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy, includePXE bool) []byte {
+func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy, includePXE bool, nextServer string) []byte {
 	serverIP := net.ParseIP(settings.Server.AdvertiseIP).To4()
 	if serverIP == nil {
 		return nil
+	}
+	nextServerIP := resolveNextServerIP(settings, nextServer)
+	if nextServerIP == nil {
+		nextServerIP = serverIP
 	}
 	yi := net.ParseIP(yiaddr).To4()
 	if yi == nil {
@@ -531,7 +491,7 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	}
 	msgType := byte(2)
 	opts := parseOptions(req[240:])
-	if proxy || (len(opts[53]) > 0 && opts[53][0] == 3) {
+	if len(opts[53]) > 0 && opts[53][0] == 3 {
 		msgType = 5
 	}
 	resp := make([]byte, 0, 548)
@@ -540,7 +500,7 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	resp = append(resp, 0, 0, 0x80, 0)
 	resp = append(resp, req[12:16]...)
 	resp = append(resp, yi...)
-	resp = append(resp, serverIP...)
+	resp = append(resp, nextServerIP...)
 	resp = append(resp, req[24:28]...)
 	resp = append(resp, req[28:44]...)
 	resp = append(resp, make([]byte, 64)...)
@@ -563,7 +523,7 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 		resp = opt(resp, 43, opt43)
 	}
 	if bootFile != "" {
-		resp = opt(resp, 66, []byte(settings.Server.AdvertiseIP))
+		resp = opt(resp, 66, []byte(nextServerIP.String()))
 		resp = opt(resp, 67, append([]byte(bootFile), 0))
 	}
 	if settings.DHCP.Mode == "dhcp" && !proxy {
@@ -594,6 +554,14 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	}
 	resp = append(resp, 255)
 	return resp
+}
+
+func resolveNextServerIP(settings storage.ServiceSettings, value string) net.IP {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "0.0.0.0" || stringContains(strings.ToLower(value), "%tftpserver%") {
+		value = settings.Server.AdvertiseIP
+	}
+	return net.ParseIP(value).To4()
 }
 
 func nak(req []byte, settings storage.ServiceSettings, message string) []byte {

@@ -247,11 +247,22 @@ func (h *Handler) validateConfig(c *gin.Context) {
 }
 
 func (h *Handler) saveConfig(c *gin.Context) {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		Fail(c, 400, "CONFIG_INVALID", "配置读取失败")
+		return
+	}
 	var settings storage.ServiceSettings
-	if err := c.ShouldBindJSON(&settings); err != nil {
+	if err := json.Unmarshal(raw, &settings); err != nil {
 		Fail(c, 400, "CONFIG_INVALID", "配置格式错误")
 		return
 	}
+	current, err := h.app.Storage().GetSettings(c.Request.Context())
+	if err != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", err.Error())
+		return
+	}
+	settings = preserveMissingConfigSections(raw, settings, current)
 	if err := h.app.Storage().SaveSettings(c.Request.Context(), settings); err != nil {
 		Fail(c, 400, "CONFIG_SAVE_FAILED", err.Error())
 		return
@@ -259,6 +270,26 @@ func (h *Handler) saveConfig(c *gin.Context) {
 	h.app.EventHub().Publish("info", "config", "服务配置已保存")
 	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "config", "服务配置已保存", nil)
 	OK(c, settings)
+}
+
+func preserveMissingConfigSections(raw []byte, settings, current storage.ServiceSettings) storage.ServiceSettings {
+	if len(raw) == 0 {
+		return settings
+	}
+	var sections map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &sections); err != nil {
+		return settings
+	}
+	if _, ok := sections["boot_files"]; !ok {
+		settings.BootFiles = current.BootFiles
+	}
+	if _, ok := sections["netboot_xyz"]; !ok {
+		settings.NetbootXYZ = current.NetbootXYZ
+	}
+	if _, ok := sections["security"]; !ok {
+		settings.Security = current.Security
+	}
+	return settings
 }
 
 func (h *Handler) startServices(c *gin.Context) {

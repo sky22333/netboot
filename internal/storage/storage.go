@@ -145,8 +145,26 @@ func (s *Store) GetSettings(ctx context.Context) (ServiceSettings, error) {
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
 		return ServiceSettings{}, err
 	}
+	s.restoreMissingSections(raw, &settings)
 	s.normalizeSettings(&settings)
 	return settings, nil
+}
+
+func (s *Store) restoreMissingSections(raw string, settings *ServiceSettings) {
+	var sections map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
+		return
+	}
+	defaults := s.DefaultSettings()
+	if _, ok := sections["boot_files"]; !ok {
+		settings.BootFiles = defaults.BootFiles
+	}
+	if _, ok := sections["netboot_xyz"]; !ok {
+		settings.NetbootXYZ = defaults.NetbootXYZ
+	}
+	if _, ok := sections["security"]; !ok {
+		settings.Security = defaults.Security
+	}
 }
 
 func (s *Store) normalizeSettings(settings *ServiceSettings) {
@@ -231,6 +249,15 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	}
 	if settings.BootFiles.IPXE == "" {
 		settings.BootFiles.IPXE = defaults.BootFiles.IPXE
+	}
+	if settings.BootFiles.BIOS == "" {
+		settings.BootFiles.BIOS = defaults.BootFiles.BIOS
+	}
+	if settings.BootFiles.UEFI32 == "" {
+		settings.BootFiles.UEFI32 = defaults.BootFiles.UEFI32
+	}
+	if settings.BootFiles.UEFI64 == "" {
+		settings.BootFiles.UEFI64 = defaults.BootFiles.UEFI64
 	}
 }
 
