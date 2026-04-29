@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -90,6 +91,8 @@ func NewRouter(app Backend) http.Handler {
 	protected.POST("/users/:id/password", h.changeUserPassword)
 	protected.DELETE("/users/:id", h.deleteUser)
 	protected.GET("/files", h.listFiles)
+	protected.GET("/files/content", h.getFileContent)
+	protected.PUT("/files/content", h.saveFileContent)
 	protected.POST("/files/upload", h.uploadFile)
 	protected.POST("/files/mkdir", h.mkdirFile)
 	protected.POST("/files/rename", h.renameFile)
@@ -558,9 +561,10 @@ func (h *Handler) deleteUser(c *gin.Context) {
 func (h *Handler) listFiles(c *gin.Context) {
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
 	rootType := c.DefaultQuery("root", "http")
-	root := settings.HTTPBoot.Root
-	if rootType == "tftp" {
-		root = settings.TFTP.Root
+	root, err := fileRoot(settings, rootType)
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
 	}
 	rel := c.DefaultQuery("path", ".")
 	target, err := safeJoin(root, rel)
@@ -575,17 +579,21 @@ func (h *Handler) listFiles(c *gin.Context) {
 	}
 	files := []gin.H{}
 	for _, entry := range entries {
-		info, _ := entry.Info()
-		files = append(files, gin.H{"name": entry.Name(), "dir": entry.IsDir(), "size": info.Size(), "mod_time": info.ModTime()})
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, gin.H{"name": entry.Name(), "dir": entry.IsDir(), "size": info.Size(), "mod_time": info.ModTime(), "editable": !entry.IsDir() && isEditableTextPath(entry.Name()) && info.Size() <= maxEditableFileBytes})
 	}
-	OK(c, gin.H{"root": rootType, "path": rel, "files": files})
+	OK(c, gin.H{"root": rootType, "path": rel, "base_path": root, "files": files})
 }
 
 func (h *Handler) uploadFile(c *gin.Context) {
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	root := settings.HTTPBoot.Root
-	if c.DefaultPostForm("root", "http") == "tftp" {
-		root = settings.TFTP.Root
+	root, err := fileRoot(settings, c.DefaultPostForm("root", "http"))
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
 	}
 	dir, err := safeJoin(root, c.DefaultPostForm("path", "."))
 	if err != nil {
@@ -617,9 +625,10 @@ func (h *Handler) mkdirFile(c *gin.Context) {
 		Fail(c, 400, "MKDIR_INVALID", "目录参数错误")
 		return
 	}
-	root := settings.HTTPBoot.Root
-	if req.Root == "tftp" {
-		root = settings.TFTP.Root
+	root, err := fileRoot(settings, req.Root)
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
 	}
 	target, err := safeJoin(root, req.Path)
 	if err != nil {
@@ -640,9 +649,10 @@ func (h *Handler) renameFile(c *gin.Context) {
 		Fail(c, 400, "RENAME_INVALID", "重命名参数错误")
 		return
 	}
-	root := settings.HTTPBoot.Root
-	if req.Root == "tftp" {
-		root = settings.TFTP.Root
+	root, err := fileRoot(settings, req.Root)
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
 	}
 	from, err := safeJoin(root, req.From)
 	if err != nil {
@@ -664,9 +674,10 @@ func (h *Handler) renameFile(c *gin.Context) {
 
 func (h *Handler) deleteFile(c *gin.Context) {
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	root := settings.HTTPBoot.Root
-	if c.DefaultQuery("root", "http") == "tftp" {
-		root = settings.TFTP.Root
+	root, err := fileRoot(settings, c.DefaultQuery("root", "http"))
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
 	}
 	target, err := safeJoin(root, c.Query("path"))
 	if err != nil {
@@ -681,6 +692,94 @@ func (h *Handler) deleteFile(c *gin.Context) {
 	OK(c, gin.H{"deleted": c.Query("path")})
 }
 
+func (h *Handler) getFileContent(c *gin.Context) {
+	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	rootType := c.DefaultQuery("root", "http")
+	root, err := fileRoot(settings, rootType)
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
+	}
+	rel := c.Query("path")
+	target, err := safeJoin(root, rel)
+	if err != nil {
+		Fail(c, 400, "PATH_INVALID", "路径无效")
+		return
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		Fail(c, 404, "FILE_NOT_FOUND", "文件不存在")
+		return
+	}
+	if info.IsDir() {
+		Fail(c, 400, "FILE_IS_DIRECTORY", "目录不能在线编辑")
+		return
+	}
+	if !isEditableTextPath(target) {
+		Fail(c, 400, "FILE_NOT_EDITABLE", "该文件类型不支持在线编辑")
+		return
+	}
+	if info.Size() > maxEditableFileBytes {
+		Fail(c, 400, "FILE_TOO_LARGE", "文件超过在线编辑大小限制")
+		return
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		Fail(c, 500, "FILE_READ_FAILED", err.Error())
+		return
+	}
+	if !utf8.Valid(data) {
+		Fail(c, 400, "FILE_NOT_TEXT", "文件不是 UTF-8 文本")
+		return
+	}
+	OK(c, gin.H{"root": rootType, "path": rel, "content": string(data), "size": info.Size(), "mod_time": info.ModTime()})
+}
+
+func (h *Handler) saveFileContent(c *gin.Context) {
+	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	var req struct {
+		Root    string `json:"root"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Path == "" {
+		Fail(c, 400, "FILE_CONTENT_INVALID", "文件内容参数错误")
+		return
+	}
+	root, err := fileRoot(settings, req.Root)
+	if err != nil {
+		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
+		return
+	}
+	target, err := safeJoin(root, req.Path)
+	if err != nil {
+		Fail(c, 400, "PATH_INVALID", "路径无效")
+		return
+	}
+	if !isEditableTextPath(target) {
+		Fail(c, 400, "FILE_NOT_EDITABLE", "该文件类型不支持在线编辑")
+		return
+	}
+	if len(req.Content) > maxEditableFileBytes {
+		Fail(c, 400, "FILE_TOO_LARGE", "文件超过在线编辑大小限制")
+		return
+	}
+	if !utf8.ValidString(req.Content) {
+		Fail(c, 400, "FILE_NOT_TEXT", "文件内容必须是 UTF-8 文本")
+		return
+	}
+	if info, err := os.Stat(target); err == nil && info.IsDir() {
+		Fail(c, 400, "FILE_IS_DIRECTORY", "目录不能在线编辑")
+		return
+	}
+	if err := os.WriteFile(target, []byte(req.Content), 0644); err != nil {
+		Fail(c, 500, "FILE_WRITE_FAILED", err.Error())
+		return
+	}
+	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "files", "保存文本文件", gin.H{"path": req.Path, "root": req.Root})
+	OK(c, gin.H{"path": req.Path, "size": len(req.Content)})
+}
+
 func (h *Handler) createTorrent(c *gin.Context) {
 	var req struct {
 		Path string `json:"path"`
@@ -691,6 +790,10 @@ func (h *Handler) createTorrent(c *gin.Context) {
 		return
 	}
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	if req.Root != "" && req.Root != "http" {
+		Fail(c, 400, "TORRENT_ROOT_INVALID", "只有 HTTP Boot 目录支持制作种子")
+		return
+	}
 	root := settings.HTTPBoot.Root
 	target, err := safeJoin(root, req.Path)
 	if err != nil {
@@ -813,6 +916,32 @@ func (h *Handler) dynamicProxy(c *gin.Context) {
 		return
 	}
 	c.String(http.StatusOK, script)
+}
+
+const maxEditableFileBytes = 1 << 20
+
+var editableTextExts = map[string]bool{
+	".bat": true, ".cfg": true, ".cmd": true, ".conf": true, ".ini": true,
+	".ipxe": true, ".json": true, ".ks": true, ".md": true, ".ps1": true,
+	".seed": true, ".sh": true, ".toml": true, ".txt": true, ".xml": true,
+	".yaml": true, ".yml": true,
+}
+
+func fileRoot(settings storage.ServiceSettings, rootType string) (string, error) {
+	switch rootType {
+	case "", "http":
+		return settings.HTTPBoot.Root, nil
+	case "tftp":
+		return settings.TFTP.Root, nil
+	case "netboot":
+		return settings.NetbootXYZ.DownloadDir, nil
+	default:
+		return "", os.ErrInvalid
+	}
+}
+
+func isEditableTextPath(path string) bool {
+	return editableTextExts[strings.ToLower(filepath.Ext(path))]
 }
 
 func safeJoin(root, rel string) (string, error) {
