@@ -18,8 +18,7 @@
       <section class="card overflow-hidden">
         <div class="flex flex-wrap gap-2 border-b border-neutral-200 p-4">
           <button class="btn" @click="add">添加操作</button>
-          <button class="btn" @click="addTemplate('ping')">添加 Ping 模板</button>
-          <button class="btn" @click="addTemplate('curl')">添加 HTTP 检查模板</button>
+          <button v-for="template in templates" :key="template.key" class="btn" @click="addTemplate(template)">{{ template.label }}</button>
         </div>
         <div class="divide-y divide-neutral-100">
           <div v-for="(action, index) in actions" :key="actionKey(action, index)" class="grid gap-2 p-4 lg:grid-cols-[5rem_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_auto] lg:items-center">
@@ -29,7 +28,7 @@
             <input v-model="action.args" class="input" placeholder="参数，例如 -n 1 %IP%" />
             <div class="flex flex-wrap justify-end gap-2">
               <label class="flex items-center gap-2 text-sm"><input v-model="action.enabled" type="checkbox" /> 启用</label>
-              <button class="btn h-9 px-2" :disabled="executingId === action.id || !action.id || selectedClientIds.length === 0 || !action.enabled" @click="execute(action)">
+              <button class="btn h-9 px-2" :disabled="executingId === action.id || !action.id || selectedClientIds.length === 0 || !action.enabled" :title="!action.id ? '保存后才能执行' : ''" @click="execute(action)">
                 {{ executingId === action.id ? '执行中' : '执行' }}
               </button>
               <button class="btn btn-danger h-9 px-2" @click="remove(index)">删除</button>
@@ -60,7 +59,7 @@
           <div class="mt-3 space-y-2">
             <div v-for="item in results" :key="item.client_id" class="rounded-md border border-neutral-200 p-3 text-xs">
               <div class="font-medium" :class="item.ok ? 'text-green-700' : 'text-red-700'">{{ item.client }} · {{ item.ok ? '成功' : item.error }}</div>
-              <pre v-if="item.output" class="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-neutral-50 p-2 text-neutral-700">{{ item.output }}</pre>
+              <pre v-if="item.output" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-50 p-2 font-mono text-neutral-700">{{ item.output }}</pre>
             </div>
           </div>
         </section>
@@ -76,9 +75,11 @@ import { api } from '../lib/api'
 type Action = { id?: number; sort_order: number; name: string; command: string; args: string; enabled: boolean }
 type Client = { id: number; name: string; ip: string; mac: string }
 type ActionResult = { client_id: number; client: string; ok: boolean; output?: string; error?: string }
+type ActionTemplate = { key: string; label: string; name: string; command: string; args: string }
 
 const actions = ref<Action[]>([])
 const clients = ref<Client[]>([])
+const templates = ref<ActionTemplate[]>([])
 const selectedClientIds = ref<number[]>([])
 const results = ref<ActionResult[]>([])
 const loading = ref(false)
@@ -92,9 +93,10 @@ async function load() {
   loading.value = true
   error.value = false
   try {
-    const [actionRows, clientRows] = await Promise.all([api<Action[]>('/actions'), api<Client[]>('/clients')])
+    const [actionRows, clientRows, templateRows] = await Promise.all([api<Action[]>('/actions'), api<Client[]>('/clients'), api<ActionTemplate[]>('/actions/templates')])
     actions.value = Array.isArray(actionRows) ? actionRows : []
     clients.value = Array.isArray(clientRows) ? clientRows : []
+    templates.value = Array.isArray(templateRows) ? templateRows : []
     normalizeOrder()
   } catch (e) {
     error.value = true
@@ -108,12 +110,8 @@ function add() {
   actions.value.push({ sort_order: actions.value.length + 1, name: 'New Action', command: '', args: '', enabled: true })
 }
 
-function addTemplate(kind: 'ping' | 'curl') {
-  if (kind === 'ping') {
-    actions.value.push({ sort_order: actions.value.length + 1, name: 'Ping Client', command: 'ping', args: '-n 1 %IP%', enabled: true })
-    return
-  }
-  actions.value.push({ sort_order: actions.value.length + 1, name: 'Check HTTP', command: 'curl', args: '-I http://%IP%/', enabled: true })
+function addTemplate(template: ActionTemplate) {
+  actions.value.push({ sort_order: actions.value.length + 1, name: template.name, command: template.command, args: template.args, enabled: true })
 }
 
 function remove(index: number) {

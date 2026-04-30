@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pxe/internal/booturl"
+	"pxe/internal/netutil"
 	"pxe/internal/observability"
 	"pxe/internal/pxeopt"
 	"pxe/internal/storage"
@@ -268,16 +269,7 @@ func responseBroadcastTargets(settings storage.ServiceSettings) []net.Addr {
 }
 
 func directedBroadcast(ipText, maskText string) string {
-	ip := net.ParseIP(ipText).To4()
-	mask := net.ParseIP(maskText).To4()
-	if ip == nil || mask == nil {
-		return ""
-	}
-	out := make(net.IP, 4)
-	for i := 0; i < 4; i++ {
-		out[i] = ip[i] | ^mask[i]
-	}
-	return out.String()
+	return netutil.DirectedBroadcast(ipText, maskText)
 }
 
 func clientResponseAddr(req []byte) net.Addr {

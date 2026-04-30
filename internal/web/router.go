@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -21,10 +22,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"pxe/internal/booturl"
+	"pxe/internal/command"
 	"pxe/internal/config"
 	"pxe/internal/dhcp"
 	"pxe/internal/ipxe"
 	"pxe/internal/netboot"
+	"pxe/internal/netutil"
 	"pxe/internal/observability"
 	"pxe/internal/platform"
 	"pxe/internal/storage"
@@ -84,6 +87,7 @@ func NewRouter(app Backend) http.Handler {
 	protected.GET("/menus", h.listMenus)
 	protected.PUT("/menus", h.saveMenus)
 	protected.GET("/actions", h.listActions)
+	protected.GET("/actions/templates", h.actionTemplates)
 	protected.PUT("/actions", h.saveActions)
 	protected.POST("/actions/:id/execute", h.executeAction)
 	protected.GET("/users", h.listUsers)
@@ -414,12 +418,14 @@ func (h *Handler) wol(c *gin.Context) {
 		Fail(c, 404, "CLIENT_NOT_FOUND", "客户端不存在")
 		return
 	}
-	if err := sendWOL(client.MAC); err != nil {
+	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	result, err := sendWOL(client.MAC, wolTargets(client, settings))
+	if err != nil {
 		Fail(c, 400, "WOL_FAILED", err.Error())
 		return
 	}
-	h.app.EventHub().Publish("info", "clients", "已发送 WOL 唤醒包: "+client.MAC)
-	OK(c, gin.H{"message": "已发送唤醒包"})
+	h.app.EventHub().Publish("info", "clients", fmt.Sprintf("已发送 WOL 唤醒包: %s targets=%d", client.MAC, result.Sent))
+	OK(c, gin.H{"message": "已发送唤醒包", "sent": result.Sent, "targets": result.Targets})
 }
 
 func (h *Handler) listMenus(c *gin.Context) {
@@ -464,8 +470,24 @@ func (h *Handler) saveActions(c *gin.Context) {
 		Fail(c, 500, "ACTION_SAVE_FAILED", err.Error())
 		return
 	}
+	saved, err := h.app.Storage().ListActions(c.Request.Context())
+	if err != nil {
+		Fail(c, 500, "ACTION_LIST_FAILED", err.Error())
+		return
+	}
 	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "actions", "客户端操作菜单已保存", nil)
-	OK(c, actions)
+	OK(c, saved)
+}
+
+func (h *Handler) actionTemplates(c *gin.Context) {
+	pingArgs := "-c 1 %IP%"
+	if runtime.GOOS == "windows" {
+		pingArgs = "-n 1 %IP%"
+	}
+	OK(c, []gin.H{
+		{"key": "ping", "label": "添加 Ping 模板", "name": "Ping Client", "command": "ping", "args": pingArgs},
+		{"key": "http", "label": "添加 HTTP 检查模板", "name": "Check HTTP", "command": "curl", "args": "-I http://%IP%/"},
+	})
 }
 
 func (h *Handler) executeAction(c *gin.Context) {
@@ -494,7 +516,7 @@ func (h *Handler) executeAction(c *gin.Context) {
 		cmd := exec.CommandContext(ctx, action.Command, splitArgs(args)...)
 		out, err := cmd.CombinedOutput()
 		cancel()
-		item := gin.H{"client_id": id, "client": client.Name, "output": string(out), "ok": err == nil}
+		item := gin.H{"client_id": id, "client": client.Name, "output": command.DecodeOutput(out), "ok": err == nil}
 		if err != nil {
 			item["error"] = err.Error()
 		}
@@ -986,10 +1008,15 @@ func safeJoin(root, rel string) (string, error) {
 	return targetAbs, nil
 }
 
-func sendWOL(macText string) error {
+type wolResult struct {
+	Sent    int      `json:"sent"`
+	Targets []string `json:"targets"`
+}
+
+func sendWOL(macText string, targets []string) (wolResult, error) {
 	hw, err := net.ParseMAC(strings.ReplaceAll(macText, "-", ":"))
 	if err != nil {
-		return err
+		return wolResult{}, err
 	}
 	packet := make([]byte, 6+16*len(hw))
 	for i := 0; i < 6; i++ {
@@ -998,13 +1025,59 @@ func sendWOL(macText string) error {
 	for i := 0; i < 16; i++ {
 		copy(packet[6+i*len(hw):], hw)
 	}
-	conn, err := net.Dial("udp4", "255.255.255.255:9")
+	conn, err := net.ListenPacket("udp4", ":0")
 	if err != nil {
-		return err
+		return wolResult{}, err
 	}
 	defer conn.Close()
-	_, err = conn.Write(packet)
-	return err
+	result := wolResult{Targets: []string{}}
+	var lastErr error
+	for _, target := range targets {
+		addr, err := net.ResolveUDPAddr("udp4", target)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if _, err := conn.WriteTo(packet, addr); err != nil {
+			lastErr = err
+			continue
+		}
+		result.Sent++
+		result.Targets = append(result.Targets, target)
+	}
+	if result.Sent == 0 && lastErr != nil {
+		return result, lastErr
+	}
+	return result, nil
+}
+
+func wolTargets(client storage.Client, settings storage.ServiceSettings) []string {
+	hosts := []string{"255.255.255.255"}
+	if ip := net.ParseIP(client.IP).To4(); ip != nil {
+		hosts = append(hosts, ip.String())
+		if broadcast := netutil.DirectedBroadcast(ip.String(), settings.DHCP.SubnetMask); broadcast != "" {
+			hosts = append(hosts, broadcast)
+		}
+	}
+	if broadcast := netutil.DirectedBroadcast(settings.Server.AdvertiseIP, settings.DHCP.SubnetMask); broadcast != "" {
+		hosts = append(hosts, broadcast)
+	}
+	hosts = append(hosts, netutil.InterfaceBroadcasts()...)
+	seen := map[string]bool{}
+	targets := []string{}
+	for _, host := range hosts {
+		if net.ParseIP(host).To4() == nil {
+			continue
+		}
+		for _, port := range []string{"9", "7"} {
+			target := net.JoinHostPort(host, port)
+			if !seen[target] {
+				seen[target] = true
+				targets = append(targets, target)
+			}
+		}
+	}
+	return targets
 }
 
 func staticHandler() gin.HandlerFunc {

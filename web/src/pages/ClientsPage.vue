@@ -30,8 +30,8 @@
                 <th class="w-[16%] px-4 py-3">IP</th>
                 <th class="w-[20%] px-4 py-3">MAC</th>
                 <th class="w-[12%] px-4 py-3">状态</th>
-                <th class="w-[18%] px-4 py-3">健康</th>
-                <th class="w-[16%] px-4 py-3 text-right">操作</th>
+                <th class="w-[16%] px-4 py-3">健康</th>
+                <th class="w-[18%] px-4 py-3 text-right">操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-neutral-100">
@@ -46,9 +46,9 @@
                 </td>
                 <td class="px-4 py-3 text-neutral-600">{{ client.disk_health || '-' }} / {{ client.net_speed || '-' }}</td>
                 <td class="px-4 py-3">
-                  <div class="flex justify-end gap-1">
-                    <button class="btn h-8 px-2" :disabled="busy || !client.mac" @click="wol(client)">唤醒</button>
-                    <button class="btn h-8 px-2" @click="select(client)">详情</button>
+                  <div class="flex flex-nowrap justify-end gap-1">
+                    <button class="btn h-8 min-w-12 px-2" :disabled="busy || !client.mac" @click="wol(client)">唤醒</button>
+                    <button class="btn h-8 min-w-12 px-2" @click="select(client)">详情</button>
                   </div>
                 </td>
               </tr>
@@ -237,11 +237,13 @@ async function clearMac(client: Client) {
   })
 }
 
+type WOLResponse = { sent?: number }
+
 async function wol(client: Client) {
   if (!client.id || !client.mac) return
   await run(async () => {
-    await api(`/clients/${client.id}/wol`, { method: 'POST' })
-    message.value = '唤醒包已发送。'
+    const res = await api<WOLResponse>(`/clients/${client.id}/wol`, { method: 'POST' })
+    message.value = `唤醒包已发送${res.sent ? `（${res.sent} 个目标）` : ''}。`
   })
 }
 

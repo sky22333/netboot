@@ -9,7 +9,7 @@ body {
 }
 
 .btn {
-  @apply inline-flex items-center justify-center rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex items-center justify-center whitespace-nowrap rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50;
 }
 
 .btn-primary {

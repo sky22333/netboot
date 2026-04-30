@@ -593,6 +593,14 @@ func (s *Store) SaveActions(ctx context.Context, actions []ClientAction) error {
 		return err
 	}
 	for _, a := range actions {
+		a.Name = strings.TrimSpace(a.Name)
+		a.Command = strings.TrimSpace(a.Command)
+		if a.Name == "" {
+			return fmt.Errorf("操作名称不能为空")
+		}
+		if a.Command == "" {
+			return fmt.Errorf("操作命令不能为空")
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO client_actions(sort_order,name,command,args,enabled) VALUES(?,?,?,?,?)`, a.SortOrder, a.Name, a.Command, a.Args, boolInt(a.Enabled)); err != nil {
 			return err
 		}

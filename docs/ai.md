@@ -34,11 +34,14 @@ pxe/
 ├─ cmd/pxe/                 # 程序入口
 ├─ internal/
 │  ├─ app/                  # 应用装配、服务生命周期
+│  ├─ bootmenu/             # UEFI/iPXE 菜单 timeout 等共用逻辑
+│  ├─ command/              # 服务器命令输出解码
 │  ├─ config/               # pxe.toml 启动配置
 │  ├─ dhcp/                 # DHCP、ProxyDHCP、租约和启动文件响应
 │  ├─ httpboot/             # HTTP Boot、Range、dynamic.ipxe、netboot 虚拟路径
 │  ├─ ipxe/                 # iPXE 脚本生成
 │  ├─ netboot/              # netboot.xyz 下载
+│  ├─ netutil/              # 广播地址、网卡广播等网络工具
 │  ├─ observability/        # 事件总线、实时日志
 │  ├─ platform/             # 权限和平台诊断
 │  ├─ pxeopt/               # PXE Option 43
@@ -101,12 +104,13 @@ data/
 关键实现：
 
 - ProxyDHCP 同时监听 UDP 4011 和 67，用于兼容不同 PXE/iPXE 固件。
-- ProxyDHCP 对普通 PXE DISCOVER 保持兼容响应；对 iPXE DISCOVER 只发送 OFFER，REQUEST 再发送 ACK，更符合 iPXE 状态机。
+- ProxyDHCP 的 DISCOVER 返回 OFFER，REQUEST 返回 ACK，避免向 DISCOVER 发送不合规 ACK。
 - 响应目标包含 `255.255.255.255:68`、按通告 IP/子网掩码计算的定向广播和必要时的客户端单播。
 - BIOS 启动文件优先级为 `netboot/netboot.xyz.kpxe`、`netboot/netboot.xyz-undionly.kpxe`、服务配置里的 BIOS 默认启动文件；UEFI 优先使用 `netboot/netboot.xyz.efi`。
 - 如果 netboot 文件不存在，回退到服务配置中的默认启动文件。
 - 不再提供 BIOS 原生菜单；老式 BIOS 默认加载可执行 iPXE 文件后进入 iPXE 动态菜单。
 - iPXE 动态菜单默认第一项为 `Run boot.ipxe`，执行 `data/boot/http/boot.ipxe`。
+- UEFI 原生菜单和 iPXE 动态菜单共用 `internal/bootmenu` 计算 timeout；启用随机等待时每次生成菜单都会得到 0 到配置秒数之间的随机值。
 - 下发给 PXE/iPXE 客户端的菜单标题和菜单项使用英文/ASCII，避免固件控制台乱码。
 - netboot.xyz 下载完成后会按需生成 `data/boot/tftp/local-vars.ipxe`；文件已存在时不覆盖。该脚本提供英文菜单，可从公网镜像或通告 IP 对应的内网 HTTP 路径启动 Debian 12 和 Alpine Linux，内网地址会自动使用当前 HTTP Boot 端口。
 
@@ -164,6 +168,9 @@ format = "text"
 - 文件管理覆盖 HTTP Boot、TFTP 和 netboot.xyz 三个目录；目录列表只读取当前目录，不递归扫描。在线编辑仅允许小型 UTF-8 文本文件，镜像、固件和压缩包不读取到浏览器。
 - 文件管理必须做路径限制和危险操作确认。
 - 完整 DHCP、删除、上传、外部下载等高风险操作必须明确提示。
+- 客户端列表操作按钮需要保持横向文字显示；紧凑表格使用固定操作列和不换行按钮。
+- netboot.xyz 页面展示来源、保存位置、本地钩子、每个启动文件状态和下载结果。
+- 操作菜单模板由后端根据服务器平台生成；命令输出通过 `internal/command` 解码，Windows GBK/GB18030 输出需要正确显示中文。
 
 ## 安全要求
 
@@ -173,6 +180,7 @@ format = "text"
 - 登录失败按来源 IP 和用户名限流，10 分钟内失败 10 次会锁定 10 分钟。
 - 远程管理必须启用认证。
 - Cookie 使用 HttpOnly 和 SameSite。
+- 服务配置保存必须保留 `security`、`boot_files`、`netboot_xyz` 等未在当前页面展示的 section，避免旧前端或第三方调用截断配置导致认证关闭。
 - 文件访问必须限制在配置根目录内。
 - TFTP 上传默认关闭。
 - 日志不得记录密码、token、session。
@@ -234,6 +242,7 @@ GitHub Actions：
 ## 维护规范
 
 - 修改 DHCP/TFTP/HTTP Boot 逻辑时，必须考虑 BIOS、UEFI、iPXE 和老旧 PXE 固件兼容性。
+- 修改 Wake-on-LAN 时必须保持多目标发送策略：UDP 9/7、全局广播、定向广播、客户端单播和本机网卡广播。
 - 修改数据库结构时必须保证幂等迁移或兼容旧表。
 - 修复 bug 时优先补测试或可复现日志。
 - 重构只在明确范围内进行，不混入无关功能。
