@@ -114,6 +114,206 @@ data/
 - 下发给 PXE/iPXE 客户端的菜单标题和菜单项使用英文/ASCII，避免固件控制台乱码。
 - netboot.xyz 下载完成后会按需生成 `data/boot/tftp/local-vars.ipxe`；文件已存在时不覆盖。该脚本提供英文菜单，可从公网镜像或通告 IP 对应的内网 HTTP 路径启动 Debian 12 和 Alpine Linux，内网地址会自动使用当前 HTTP Boot 端口。
 
+## PXE 客户端网络交互细节
+
+本节按当前代码实现描述客户端实际会看到的网络行为，主要用于排查固件兼容性问题。入口在 `internal/app.StartServices`，协议处理集中在 `internal/dhcp`、`internal/tftp`、`internal/httpboot` 和 `internal/ipxe`。
+
+### 服务启动和监听端口
+
+启用服务时，`internal/app` 从 SQLite 读取服务配置，然后按开关启动协议服务：
+
+- HTTP Boot：监听 `settings.HTTPBoot.Addr`，通常是 TCP 80 或自定义端口。
+- TFTP：监听 `settings.Server.ListenIP:69`。
+- Torrent tracker：监听 `settings.Torrent.Addr`。
+- 完整 DHCP：监听 `settings.Server.ListenIP:67`。
+- ProxyDHCP：同时监听 `settings.Server.ListenIP:67` 和 `settings.Server.ListenIP:4011`。
+
+ProxyDHCP 同时监听 67 和 4011 是为了兼容不同固件。有些 PXE 固件只在普通 DHCP 交换中读取启动信息，有些会继续向 ProxyDHCP 4011 请求启动信息。复杂网络中如果 DHCP relay 或防火墙没有转发 4011，只有同网段客户端最容易成功。
+
+### DHCP 请求解析
+
+`internal/dhcp.buildResponse` 只处理 DHCP message type 1 和 3：
+
+- `1`：Discover。
+- `3`：Request。
+- `4` 和 `7`：Decline/Release，会释放完整 DHCP 租约，不返回启动响应。
+
+代码会解析以下关键 options：
+
+- Option 53：DHCP message type。
+- Option 50：客户端请求的 IP。
+- Option 54：DHCP server identifier；完整 DHCP 模式下如果 Request 指向别的 DHCP server，会忽略。
+- Option 60：vendor class；包含 `PXEClient` 或 `iPXE` 会影响识别。
+- Option 77：user class；iPXE 常见值为 `iPXE`。
+- Option 93：PXE client architecture，用于区分 BIOS、UEFI32、UEFI64、ARM UEFI。
+- Option 97：client machine identifier，PXE 客户端常带。
+- Option 175：iPXE encapsulated options；存在时按 iPXE 处理，并可检测 HTTP 等 feature。
+
+如果不是 PXE/iPXE 客户端，并且完整 DHCP 模式下 `non_pxe_action=network_only`，代码只返回普通网络配置，不返回启动文件。ProxyDHCP 模式下普通 DHCP 客户端会被忽略，避免影响非启动设备。
+
+### 完整 DHCP 交互
+
+完整 DHCP 模式会维护内存租约池：
+
+```text
+DHCPDISCOVER -> 分配/预留地址 -> DHCPOFFER
+DHCPREQUEST  -> 确认地址       -> DHCPACK
+```
+
+完整 DHCP 响应包含：
+
+- `yiaddr`：分配给客户端的 IP。
+- `siaddr`：启动服务器 IP，默认是通告 IP，菜单项选择时可使用菜单项服务器 IP。
+- Option 1：子网掩码。
+- Option 3：网关。
+- Option 6：DNS。
+- Option 51/58/59：租约、续租、重新绑定时间。
+- Option 54：server identifier。
+- Option 60：`PXEClient`，仅启动响应包含。
+- Option 66：TFTP server name，有 bootfile 时写入。
+- Option 67：bootfile name，有 bootfile 时写入。
+- BOOTP header file 字段：同样写入 bootfile，但超过 127 字节会截断；短 TFTP 文件名最稳。
+
+完整 DHCP 适合隔离网络。如果同网段已有路由器 DHCP，同时启用完整 DHCP 会导致地址冲突或客户端随机选择 DHCP server。
+
+### ProxyDHCP 交互
+
+ProxyDHCP 不分配 IP，只提供启动信息：
+
+```text
+客户端从现有 DHCP 获取 IP
+客户端 PXE 请求启动信息
+本程序返回 next-server、bootfile、PXE options
+```
+
+当前实现中：
+
+- Discover 返回 DHCPOFFER。
+- Request 返回 DHCPACK。
+- 不再对同一个 Discover 额外发送 ACK。
+- port 67 的 proxy 响应会尝试广播到客户端端口 68。
+- port 4011 的 proxy 响应会优先回发到请求来源地址。
+
+响应目标由 `sendResponse` 组合：
+
+- `255.255.255.255:68`。
+- 根据通告 IP 和子网掩码计算出的定向广播，例如 `192.168.1.255:68`。
+- 如果请求包中有 `ciaddr` 或 option 50，则尝试单播到 `clientIP:68`。
+- ProxyDHCP 下还会回发到 UDP `remote`。
+
+这种多目标发送提高了同网段兼容性，但实际是否能到达客户端仍取决于操作系统广播权限、防火墙、交换机、DHCP relay 和固件监听行为。
+
+### 架构识别和启动文件选择
+
+架构识别由 option 93 决定：
+
+```text
+缺失或 0  -> bios
+6         -> uefi32
+7 或 9    -> uefi64
+10        -> uefi_arm32
+11        -> uefi_arm64
+其他      -> bios
+```
+
+启动文件选择在 `executableBootFile`：
+
+- UEFI：如果 `data/boot/netboot/netboot.xyz.efi` 存在，优先下发 `netboot/netboot.xyz.efi`。
+- UEFI32：没有 netboot efi 时回退到 `settings.BootFiles.UEFI32`。
+- 其他 UEFI：没有 netboot efi 时回退到 `settings.BootFiles.UEFI64`。
+- BIOS：优先 `netboot/netboot.xyz.kpxe`，再 `netboot/netboot.xyz-undionly.kpxe`，最后 `settings.BootFiles.BIOS`。
+
+维护者要注意：代码能识别 ARM UEFI 和 UEFI32，不代表已经完整提供对应架构 EFI 文件。只要 `netboot.xyz.efi` 存在，UEFI32/ARM UEFI 也会优先拿到它，这可能与实际 CPU 架构不匹配。
+
+### iPXE 二阶段识别
+
+代码把以下情况识别为 iPXE：
+
+- Option 77 包含 `iPXE`。
+- Option 60 包含 `iPXE`。
+- Option 175 存在。
+
+识别为 iPXE 后，如果 option 175 中检测到 feature `0x13`，会返回：
+
+```text
+http://通告IP[:HTTP端口]/dynamic.ipxe?bootfile=ipxemenu
+```
+
+如果没有检测到 HTTP feature，则回退到普通可执行启动文件，避免向不支持 HTTP 的 iPXE 下发 HTTP chain。这个策略偏保守；如果某些 iPXE 构建实际支持 HTTP 但没有正确上报 feature，可能不会进入 HTTP 动态菜单。
+
+iPXE 客户端状态会写为 `ipxe`，普通 PXE 启动阶段写为 `pxe`。客户端表中的状态来自 DHCP 请求，不代表系统已经成功启动。
+
+### UEFI 原生 PXE 菜单
+
+UEFI 原生菜单使用 PXE Option 43，生成逻辑在 `internal/pxeopt`。当前行为：
+
+- 只对 UEFI 非 iPXE 客户端考虑原生菜单。
+- 如果请求 option 43 中包含 selected type，会按菜单项 `pxe_type` 找到启动项并返回其 `boot_file`。
+- 菜单项的 `server_ip` 会写入 `siaddr` 和 option 66。
+- 完整 DHCP 模式且菜单启用时，会返回 Option 43 菜单。
+- ProxyDHCP 模式下不返回 UEFI 原生菜单，而是直接下发启动文件。
+
+实际经验上，UEFI 固件对 PXE Option 43 菜单支持差异较大。不要把原生 UEFI 菜单作为主要兼容路径；更稳的做法是先加载 iPXE，再使用 HTTP 动态菜单。
+
+### TFTP 第一阶段
+
+TFTP 由 `internal/tftp` 提供：
+
+- 初始监听 UDP 69。
+- 每个 RRQ/WRQ 使用临时 UDP 端口继续传输。
+- 支持 `blksize` 和 `tsize` OACK。
+- 如果客户端不确认 OACK，会回退到标准 512 字节块。
+- `blksize` 最大压到 1428，降低 MTU 分片风险。
+- 读取路径限制在 TFTP root；`netboot/...` 会映射到 netboot 下载目录。
+
+TFTP 适合传第一阶段小文件，如 `.kpxe`、`.efi`、`.ipxe`。大镜像应走 HTTP Boot。老旧固件可能对 OACK、临时端口、丢包重传更敏感，排障时可降低 block size 或回退默认设置。
+
+TFTP 中存在虚拟 iPXE 脚本：
+
+- 请求 `boot.ipxe`、`dynamic.ipxe`、`ipxemenu.ipxe` 时，如果实际文件不存在，代码会生成脚本。
+- 脚本会优先 chain HTTP `/dynamic.ipxe?bootfile=ipxemenu`。
+- HTTP 不可用时回退尝试 TFTP `netboot/netboot.xyz.efi`、`netboot/netboot.xyz.kpxe`、`netboot/netboot.xyz-undionly.kpxe`。
+- 最后尝试本地磁盘启动。
+
+### HTTP Boot 和动态 iPXE
+
+HTTP Boot 服务由 `internal/httpboot` 提供：
+
+- `/dynamic.ipxe`：生成 iPXE 动态脚本。
+- `/client/report`：接收客户端健康报告。
+- `/netboot/...`：映射到 netboot 下载目录。
+- 其他路径：读取 HTTP Boot root。
+- 支持 `Range` 时使用 `http.ServeContent`，适合内核、initrd 和大文件。
+
+管理 Web 也暴露 `/dynamic.ipxe`，但实际客户端通常通过 HTTP Boot 服务访问。动态脚本由 `internal/ipxe.Generator` 生成：
+
+- 空 bootfile 或 `ipxemenu`：生成 iPXE 菜单。
+- `%dynamicboot%=boot.ipxe`：转换为 HTTP `/dynamic.ipxe?bootfile=boot.ipxe`。
+- 相对路径：从 HTTP Boot root 通过 HTTP chain。
+- `http://` 或 `https://`：直接 chain。
+- 空 boot file：尝试本地磁盘 `sanboot --drive 0x80`。
+
+这不是原生 UEFI HTTP Boot 模式。项目仍以 TFTP 加载第一阶段 iPXE/EFI 文件，再由 iPXE 使用 HTTP。
+
+### 常见固件失败点
+
+- Secure Boot 开启：DHCP/TFTP 正常，但未签名的 iPXE/netboot EFI 可能被固件拒绝。
+- UEFI32 或 ARM UEFI：代码能识别，但默认 EFI 文件选择未完全按架构闭环。
+- 只支持原生 UEFI HTTP Boot 的环境：项目没有 DHCP 下发 HTTP URL 的独立模式。
+- Wi-Fi PXE：大多数家用无线网卡固件不支持预启动 PXE。
+- USB 网卡 PXE：依赖 BIOS/UEFI 对该 USB 网卡的内置支持，兼容性弱于板载有线网卡。
+- ProxyDHCP 支持不完整的固件：可尝试完整 DHCP 模式验证。
+- 跨 VLAN：需要 DHCP relay/ip helper 正确转发 67、68、4011，并允许 TFTP/HTTP 到服务端。
+- 防火墙：Windows、Linux nftables/iptables、OpenWrt 防火墙都可能阻断 UDP 67/69/4011 或 TCP HTTP Boot 端口。
+
+### 维护建议
+
+- 修改 DHCP 响应前，先确认 option 53、54、60、66、67、77、93、97、175 的语义。
+- 修改 boot file 选择时，必须考虑 BIOS、UEFI32、UEFI64、ARM UEFI 的文件架构匹配。
+- 不要把 UEFI Option 43 菜单当作唯一菜单能力；iPXE 动态菜单是主路径。
+- 增加新固件兼容策略时，应补 DHCP 响应 golden test 或抓包说明。
+- 排查客户端不响应时，优先抓包看客户端是否收到 `yiaddr/siaddr/filename/option66/option67`，以及是否继续发 TFTP RRQ。
+
 ## 配置说明
 
 `pxe.toml` 只保存启动前必须知道的信息：
