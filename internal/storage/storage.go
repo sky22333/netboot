@@ -93,8 +93,8 @@ func (s *Store) DefaultSettings() ServiceSettings {
 		TFTP:       TFTPSettings{Enabled: true, Root: filepath.Join(s.dataDir, "boot", "tftp"), AllowUpload: false, MaxTransfers: 64, BlockSizeMax: 1428, RetryCount: 5, TimeoutSeconds: 3, MaxUploadBytes: 256 * 1024 * 1024},
 		HTTPBoot:   HTTPBootSettings{Enabled: true, Addr: ":80", Root: filepath.Join(s.dataDir, "boot", "http"), DirectoryListing: true, RangeRequests: true},
 		SMB:        SMBSettings{Enabled: false, Root: filepath.Join(s.dataDir, "smb"), ShareName: "pxe", Permissions: "read"},
-		BootFiles:  BootFilesSettings{BIOS: "ipxe.bios", UEFI32: "ipxe32.efi", UEFI64: "ipxe.efi", IPXE: "boot.ipxe"},
-		NetbootXYZ: NetbootXYZSettings{Enabled: true, DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz.efi", "netboot.xyz-undionly.kpxe"}},
+		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi", IPXE: "boot.ipxe"},
+		NetbootXYZ: NetbootXYZSettings{Enabled: true, DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
 		Torrent:    TorrentSettings{Enabled: false, Addr: ":6969"},
 		Security:   SecuritySettings{AdminAuthEnabled: true, AllowRemoteAdmin: false},
 	}
@@ -253,15 +253,22 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	if settings.BootFiles.BIOS == "" {
 		settings.BootFiles.BIOS = defaults.BootFiles.BIOS
 	}
-	if settings.BootFiles.UEFI32 == "" {
-		settings.BootFiles.UEFI32 = defaults.BootFiles.UEFI32
+	if settings.BootFiles.UEFIIA32 == "" {
+		settings.BootFiles.UEFIIA32 = defaults.BootFiles.UEFIIA32
 	}
-	if settings.BootFiles.UEFI64 == "" {
-		settings.BootFiles.UEFI64 = defaults.BootFiles.UEFI64
+	if settings.BootFiles.UEFIX64 == "" {
+		settings.BootFiles.UEFIX64 = defaults.BootFiles.UEFIX64
+	}
+	if settings.BootFiles.UEFIARM32 == "" {
+		settings.BootFiles.UEFIARM32 = defaults.BootFiles.UEFIARM32
+	}
+	if settings.BootFiles.UEFIARM64 == "" {
+		settings.BootFiles.UEFIARM64 = defaults.BootFiles.UEFIARM64
 	}
 }
 
 func (s *Store) SaveSettings(ctx context.Context, settings ServiceSettings) error {
+	s.normalizeSettings(&settings)
 	if err := ValidateSettings(settings); err != nil {
 		return err
 	}

@@ -1,4 +1,5 @@
 #!ipxe
+isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 60000
 set public-mirror https://mirrors.tuna.tsinghua.edu.cn
 
@@ -6,7 +7,7 @@ menu PXE Install Menu
 item public_debian Public Install Debian 12
 item public_alpine Public Install Alpine Linux
 item shell iPXE Shell
-item exit Continue netboot.xyz
+item exit Exit iPXE
 choose --timeout ${menu-timeout} selected || goto exit
 goto ${selected}
 

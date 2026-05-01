@@ -3,6 +3,7 @@ package dhcp
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -75,6 +76,39 @@ func TestIPXEClientSeenStatus(t *testing.T) {
 	}
 }
 
+func TestExecutableBootFileUsesArchitectureSpecificNetbootFiles(t *testing.T) {
+	ctx := context.Background()
+	_, settings := testStoreAndSettings(t, ctx)
+	settings.NetbootXYZ.DownloadDir = t.TempDir()
+	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi"))
+	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz-arm64.efi"))
+	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.kpxe"))
+
+	cases := map[string]string{
+		"bios":       "netboot/netboot.xyz.kpxe",
+		"uefi_x64":   "netboot/netboot.xyz.efi",
+		"uefi_arm64": "netboot/netboot.xyz-arm64.efi",
+		"uefi_ia32":  settings.BootFiles.UEFIIA32,
+		"uefi_arm32": settings.BootFiles.UEFIARM32,
+	}
+	for arch, want := range cases {
+		if got := executableBootFile(settings, arch); got != want {
+			t.Fatalf("executableBootFile(%s) = %q, want %q", arch, got, want)
+		}
+	}
+}
+
+func TestARM64DoesNotReuseX64NetbootEFI(t *testing.T) {
+	ctx := context.Background()
+	_, settings := testStoreAndSettings(t, ctx)
+	settings.NetbootXYZ.DownloadDir = t.TempDir()
+	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi"))
+
+	if got := executableBootFile(settings, "uefi_arm64"); got != settings.BootFiles.UEFIARM64 {
+		t.Fatalf("expected ARM64 to fall back to ARM64 boot file, got %q", got)
+	}
+}
+
 func testStoreAndSettings(t *testing.T, ctx context.Context) (*storage.Store, storage.ServiceSettings) {
 	t.Helper()
 	dir := t.TempDir()
@@ -87,6 +121,13 @@ func testStoreAndSettings(t *testing.T, ctx context.Context) (*storage.Store, st
 	settings.Server.AdvertiseIP = "192.168.1.10"
 	settings.DHCP.Mode = "proxy"
 	return store, settings
+}
+
+func mustWriteFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("boot"), 0644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type testOption struct {

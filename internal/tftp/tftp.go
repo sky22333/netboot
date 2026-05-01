@@ -221,7 +221,11 @@ chain %s/dynamic.ipxe?bootfile=ipxemenu || goto tftp_fallback
 
 :tftp_fallback
 echo HTTP boot is unavailable, trying TFTP netboot.xyz
+iseq ${buildarch} arm64 && goto arm64_fallback
 iseq ${platform} efi && chain tftp://%s/netboot/netboot.xyz.efi || chain tftp://%s/netboot/netboot.xyz.kpxe || chain tftp://%s/netboot/netboot.xyz-undionly.kpxe || goto local
+
+:arm64_fallback
+chain tftp://%s/netboot/netboot.xyz-arm64.efi || goto local
 
 :local
 sanboot --no-describe --drive 0x80 || goto failed
@@ -230,7 +234,7 @@ sanboot --no-describe --drive 0x80 || goto failed
 echo PXE boot failed. Check HTTP/TFTP service, firewall and netboot.xyz files.
 sleep 5
 shell
-`, httpURI, server, server, server), true
+`, httpURI, server, server, server, server), true
 }
 
 func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, name string, client net.Addr, options map[string]string) {

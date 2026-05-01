@@ -131,8 +131,8 @@ function addItem(menu: Menu) {
   const next = menu.items.length + 1
   menu.items.push({
     sort_order: next,
-    title: menu.menu_type === 'ipxe' ? 'Run boot.ipxe' : 'iPXE UEFI',
-    boot_file: menu.menu_type === 'ipxe' ? '%dynamicboot%=boot.ipxe' : 'ipxe.efi',
+    title: menu.menu_type === 'ipxe' ? 'Run boot.ipxe' : 'iPXE UEFI x64',
+    boot_file: menu.menu_type === 'ipxe' ? '%dynamicboot%=boot.ipxe' : 'ipxe-x86_64.efi',
     pxe_type: menu.menu_type === 'ipxe' ? `800${next}` : `800${next + 1}`,
     server_ip: '%tftpserver%',
     enabled: true
@@ -185,7 +185,7 @@ function sanitizeItem(item: MenuItem) {
 function defaultMenus(): Menu[] {
   return [
     { menu_type: 'uefi', enabled: true, prompt: 'UEFI Boot Menu', timeout_seconds: 6, randomize_timeout: false, items: [
-      { sort_order: 1, title: 'iPXE UEFI', boot_file: 'ipxe.efi', pxe_type: '8002', server_ip: '%tftpserver%', enabled: true },
+      { sort_order: 1, title: 'iPXE UEFI x64', boot_file: 'ipxe-x86_64.efi', pxe_type: '8002', server_ip: '%tftpserver%', enabled: true },
       { sort_order: 2, title: 'Boot Local Disk', boot_file: '', pxe_type: '0000', server_ip: '0.0.0.0', enabled: true }
     ] },
     { menu_type: 'ipxe', enabled: true, prompt: 'iPXE Boot Menu', timeout_seconds: 6, randomize_timeout: false, items: [

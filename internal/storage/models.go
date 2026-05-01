@@ -59,10 +59,12 @@ type SMBSettings struct {
 }
 
 type BootFilesSettings struct {
-	BIOS   string `json:"bios"`
-	UEFI32 string `json:"uefi32"`
-	UEFI64 string `json:"uefi64"`
-	IPXE   string `json:"ipxe"`
+	BIOS      string `json:"bios"`
+	UEFIIA32  string `json:"uefi_ia32"`
+	UEFIX64   string `json:"uefi_x64"`
+	UEFIARM32 string `json:"uefi_arm32"`
+	UEFIARM64 string `json:"uefi_arm64"`
+	IPXE      string `json:"ipxe"`
 }
 
 type NetbootXYZSettings struct {

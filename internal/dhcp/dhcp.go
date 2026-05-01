@@ -406,22 +406,38 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 }
 
 func executableBootFile(settings storage.ServiceSettings, arch string) string {
-	if isUEFIArch(arch) {
-		if netbootExists(settings, "netboot.xyz.efi") {
-			return "netboot/netboot.xyz.efi"
+	for _, candidate := range bootFileCandidates(settings, arch) {
+		if candidate.NetbootName != "" {
+			if netbootExists(settings, candidate.NetbootName) {
+				return "netboot/" + candidate.NetbootName
+			}
+			continue
 		}
-		if arch == "uefi32" && settings.BootFiles.UEFI32 != "" {
-			return settings.BootFiles.UEFI32
+		if candidate.File != "" {
+			return candidate.File
 		}
-		return settings.BootFiles.UEFI64
 	}
-	if netbootExists(settings, "netboot.xyz.kpxe") {
-		return "netboot/netboot.xyz.kpxe"
+	return ""
+}
+
+type bootFileCandidate struct {
+	NetbootName string
+	File        string
+}
+
+func bootFileCandidates(settings storage.ServiceSettings, arch string) []bootFileCandidate {
+	switch arch {
+	case "uefi_ia32":
+		return []bootFileCandidate{{File: settings.BootFiles.UEFIIA32}}
+	case "uefi_x64":
+		return []bootFileCandidate{{NetbootName: "netboot.xyz.efi"}, {File: settings.BootFiles.UEFIX64}}
+	case "uefi_arm32":
+		return []bootFileCandidate{{File: settings.BootFiles.UEFIARM32}}
+	case "uefi_arm64":
+		return []bootFileCandidate{{NetbootName: "netboot.xyz-arm64.efi"}, {File: settings.BootFiles.UEFIARM64}}
+	default:
+		return []bootFileCandidate{{NetbootName: "netboot.xyz.kpxe"}, {NetbootName: "netboot.xyz-undionly.kpxe"}, {File: settings.BootFiles.BIOS}}
 	}
-	if netbootExists(settings, "netboot.xyz-undionly.kpxe") {
-		return "netboot/netboot.xyz-undionly.kpxe"
-	}
-	return settings.BootFiles.BIOS
 }
 
 func ipxeBootFile(settings storage.ServiceSettings, arch string, opts map[byte][]byte) string {
@@ -626,9 +642,9 @@ func archName(v []byte) string {
 	case 0:
 		return "bios"
 	case 6:
-		return "uefi32"
+		return "uefi_ia32"
 	case 7, 9:
-		return "uefi64"
+		return "uefi_x64"
 	case 10:
 		return "uefi_arm32"
 	case 11:
@@ -639,7 +655,7 @@ func archName(v []byte) string {
 }
 
 func isUEFIArch(arch string) bool {
-	return arch == "uefi32" || arch == "uefi64" || arch == "uefi_arm32" || arch == "uefi_arm64"
+	return arch == "uefi_ia32" || arch == "uefi_x64" || arch == "uefi_arm32" || arch == "uefi_arm64"
 }
 
 func isPXEClient(opts map[byte][]byte, vendorClass string, isIPXE bool) bool {

@@ -34,7 +34,7 @@ func TestGetSettingsRestoresMissingSections(t *testing.T) {
 	if !settings.Security.AdminAuthEnabled {
 		t.Fatal("expected missing security section to restore admin auth default")
 	}
-	if settings.BootFiles.BIOS == "" || settings.BootFiles.UEFI64 == "" {
+	if settings.BootFiles.BIOS == "" || settings.BootFiles.UEFIX64 == "" || settings.BootFiles.UEFIARM64 == "" {
 		t.Fatalf("expected missing boot files to be restored, got %+v", settings.BootFiles)
 	}
 	if settings.NetbootXYZ.BaseURL == "" || len(settings.NetbootXYZ.Files) == 0 {

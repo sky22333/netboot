@@ -64,7 +64,7 @@ ipxe-x86_64.efi
 ipxe-arm64.efi
 ```
 
-这些固件产物是辅助启动文件，不会由应用本体自动生成。应用运行时仍通过 DHCP/ProxyDHCP、TFTP、HTTP Boot、`/dynamic.ipxe` 和 `local-vars.ipxe` 完成客户端引导。
+这些固件产物是辅助启动文件，不会由应用本体自动生成。应用运行时仍通过 DHCP/ProxyDHCP、TFTP、HTTP Boot、`/dynamic.ipxe` 和 `local-vars.ipxe` 完成客户端引导，并按 BIOS、UEFI IA32、UEFI x64、UEFI ARM32、UEFI ARM64 分别选择启动文件。
 
 更多内容见 [docs](./docs)。
 

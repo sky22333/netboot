@@ -100,6 +100,25 @@
       </section>
 
       <section class="card p-5">
+        <h2 class="font-semibold">启动文件</h2>
+        <div class="mt-4 space-y-3">
+          <div class="grid gap-2 sm:grid-cols-2">
+            <input v-model.trim="config.boot_files.bios" class="input w-full" placeholder="BIOS，例如 undionly.kpxe" />
+            <input v-model.trim="config.boot_files.ipxe" class="input w-full" placeholder="iPXE 脚本，例如 boot.ipxe" />
+          </div>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <input v-model.trim="config.boot_files.uefi_ia32" class="input w-full" placeholder="UEFI IA32，自备，可留空" />
+            <input v-model.trim="config.boot_files.uefi_x64" class="input w-full" placeholder="UEFI x64，例如 ipxe-x86_64.efi" />
+          </div>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <input v-model.trim="config.boot_files.uefi_arm32" class="input w-full" placeholder="UEFI ARM32，自备，可留空" />
+            <input v-model.trim="config.boot_files.uefi_arm64" class="input w-full" placeholder="UEFI ARM64，例如 ipxe-arm64.efi" />
+          </div>
+          <p class="field-hint">netboot.xyz 文件存在时会按架构优先使用：BIOS 使用 kpxe/undionly，UEFI x64 使用 netboot.xyz.efi，UEFI ARM64 使用 netboot.xyz-arm64.efi。</p>
+        </div>
+      </section>
+
+      <section class="card p-5">
         <h2 class="font-semibold">SMB 共享</h2>
         <div class="mt-4 space-y-3">
           <label class="flex items-center gap-2 text-sm"><input v-model="config.smb.enabled" type="checkbox" /> 启用 SMB 共享</label>

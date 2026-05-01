@@ -93,8 +93,10 @@
               <select v-model="editing.firmware" class="input mt-1 w-full">
                 <option value="unknown">unknown</option>
                 <option value="bios">bios</option>
-                <option value="uefi32">uefi32</option>
-                <option value="uefi64">uefi64</option>
+                <option value="uefi_ia32">uefi_ia32</option>
+                <option value="uefi_x64">uefi_x64</option>
+                <option value="uefi_arm32">uefi_arm32</option>
+                <option value="uefi_arm64">uefi_arm64</option>
                 <option value="ipxe">ipxe</option>
               </select>
             </div>

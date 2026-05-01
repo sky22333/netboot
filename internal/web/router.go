@@ -271,9 +271,14 @@ func (h *Handler) saveConfig(c *gin.Context) {
 		Fail(c, 400, "CONFIG_SAVE_FAILED", err.Error())
 		return
 	}
+	saved, err := h.app.Storage().GetSettings(c.Request.Context())
+	if err != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", err.Error())
+		return
+	}
 	h.app.EventHub().Publish("info", "config", "服务配置已保存")
 	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "config", "服务配置已保存", nil)
-	OK(c, settings)
+	OK(c, saved)
 }
 
 func preserveMissingConfigSections(raw []byte, settings, current storage.ServiceSettings) storage.ServiceSettings {

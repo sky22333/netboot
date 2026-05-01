@@ -30,7 +30,14 @@ export type ServiceConfig = {
     range_requests: boolean
   }
   smb: { enabled: boolean; root: string; share_name: string; permissions: string }
-  boot_files: { bios: string; uefi32: string; uefi64: string; ipxe: string }
+  boot_files: {
+    bios: string
+    uefi_ia32: string
+    uefi_x64: string
+    uefi_arm32: string
+    uefi_arm64: string
+    ipxe: string
+  }
   netboot_xyz: { enabled: boolean; download_dir: string; base_url: string; files: string[] }
   torrent: { enabled: boolean; addr: string }
   security: { admin_auth_enabled: boolean; allow_remote_admin: boolean }
