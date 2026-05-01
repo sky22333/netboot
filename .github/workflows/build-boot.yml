@@ -8,7 +8,6 @@ on:
         description: '输入发布的 Tag 名称 (例如 v1.0.0)，可留空。'
         required: false
         type: string
-        default: "v1.0.0"
 
 permissions:
   contents: write
@@ -41,7 +40,7 @@ jobs:
           if [ -f "embed.ipxe" ]; then
             cp embed.ipxe ipxe-2.0.0/src/
           else
-            echo -e "#!ipxe\ndhcp" > ipxe-2.0.0/src/embed.ipxe
+            echo -e "#!ipxe\nshell" > ipxe-2.0.0/src/embed.ipxe
           fi
 
       - name: 编译传统 BIOS (Legacy) 镜像
