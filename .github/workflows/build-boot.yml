@@ -8,6 +8,7 @@ on:
         description: '输入发布的 Tag 名称 (例如 v1.0.0)，可留空。'
         required: false
         type: string
+        default: "v1.0.0"
 
 permissions:
   contents: write
