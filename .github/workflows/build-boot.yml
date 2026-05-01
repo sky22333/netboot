@@ -1,0 +1,88 @@
+name: 编译 iPXE 启动固件
+
+# 触发条件：手动触发，并可手动输入 Tag 用于发布
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: '输入发布的 Tag 名称 (例如 v1.0.0)，可留空。'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装编译环境
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq build-essential liblzma-dev mtools mkisofs syslinux gcc-aarch64-linux-gnu wget tar
+
+      - name: 下载并解压 iPXE 稳定版源码
+        run: |
+          wget https://github.com/ipxe/ipxe/archive/v2.0.0.tar.gz -O ipxe.tar.gz
+          tar -xzf ipxe.tar.gz
+
+      - name: 开启 HTTPS 支持
+        run: |
+          sed -i 's/#undef.*DOWNLOAD_PROTO_HTTPS/#define DOWNLOAD_PROTO_HTTPS/g' ipxe-2.0.0/src/config/general.h
+
+      - name: 注入根证书
+        run: |
+          wget -O ca-bundle.crt https://curl.se/ca/cacert.pem
+          mv ca-bundle.crt ipxe-2.0.0/src/
+
+        # 使用仓库根目录的embed.ipxe，如果是子目录则在前面添加目录
+      - name: 注入内置脚本
+        run: |
+          if [ -f "embed.ipxe" ]; then
+            cp embed.ipxe ipxe-2.0.0/src/
+          else
+            echo -e "#!ipxe\ndhcp" > ipxe-2.0.0/src/embed.ipxe
+          fi
+
+      - name: 编译传统 BIOS (Legacy) 镜像
+        working-directory: ipxe-2.0.0/src
+        run: |
+          make bin/undionly.kpxe EMBED=embed.ipxe TRUST=ca-bundle.crt
+          cp bin/undionly.kpxe ../../undionly.kpxe
+
+      - name: 编译现代 UEFI x86_64 (64位) 镜像
+        working-directory: ipxe-2.0.0/src
+        run: |
+          make bin-x86_64-efi/ipxe.efi EMBED=embed.ipxe TRUST=ca-bundle.crt
+          cp bin-x86_64-efi/ipxe.efi ../../ipxe-x86_64.efi
+
+      - name: 编译 UEFI ARM64 (AArch64) 镜像
+        working-directory: ipxe-2.0.0/src
+        run: |
+          make CROSS_COMPILE=aarch64-linux-gnu- bin-arm64-efi/ipxe.efi EMBED=embed.ipxe TRUST=ca-bundle.crt
+          cp bin-arm64-efi/ipxe.efi ../../ipxe-arm64.efi
+
+      - name: 保存构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: iPXE-Binaries
+          path: |
+            undionly.kpxe
+            ipxe-x86_64.efi
+            ipxe-arm64.efi
+          retention-days: 3
+
+      - name: 自动发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: ${{ inputs.tag_name != '' }}
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: |
+            undionly.kpxe
+            ipxe-x86_64.efi
+            ipxe-arm64.efi
+          generate_release_notes: true
