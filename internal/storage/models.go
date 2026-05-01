@@ -64,7 +64,6 @@ type BootFilesSettings struct {
 	UEFIX64   string `json:"uefi_x64"`
 	UEFIARM32 string `json:"uefi_arm32"`
 	UEFIARM64 string `json:"uefi_arm64"`
-	IPXE      string `json:"ipxe"`
 }
 
 type NetbootXYZSettings struct {

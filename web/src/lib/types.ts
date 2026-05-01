@@ -36,7 +36,6 @@ export type ServiceConfig = {
     uefi_x64: string
     uefi_arm32: string
     uefi_arm64: string
-    ipxe: string
   }
   netboot_xyz: { enabled: boolean; download_dir: string; base_url: string; files: string[] }
   torrent: { enabled: boolean; addr: string }

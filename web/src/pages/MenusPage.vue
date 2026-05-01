@@ -14,12 +14,12 @@
       </div>
       <div class="mt-4 grid gap-3 lg:grid-cols-2">
         <div class="rounded-md border border-neutral-200 bg-neutral-50 p-3">
-          <div class="text-sm font-medium">UEFI PXE</div>
-          <p class="mt-1 text-xs text-neutral-500">完整 DHCP 模式可返回原生菜单；ProxyDHCP 通常直接下发启动文件。</p>
-        </div>
-        <div class="rounded-md border border-neutral-200 bg-neutral-50 p-3">
           <div class="text-sm font-medium">iPXE Menu</div>
           <p class="mt-1 text-xs text-neutral-500">进入 iPXE 后通过 HTTP 生成动态菜单，适合执行 boot.ipxe、netboot.xyz 或外部脚本。</p>
+        </div>
+        <div class="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+          <div class="text-sm font-medium">UEFI PXE</div>
+          <p class="mt-1 text-xs text-neutral-500">默认直接按架构下发 EFI；开启后完整 DHCP 可返回原生 PXE 菜单。</p>
         </div>
       </div>
       <p v-if="message" class="mt-3 text-sm" :class="error ? 'text-red-600' : 'text-neutral-500'">{{ message }}</p>
@@ -54,7 +54,7 @@
           <p class="text-xs text-neutral-500">{{ menuNote(menu.menu_type) }}</p>
           <button class="btn shrink-0" @click="addItem(menu)">添加菜单项</button>
         </div>
-        <div class="hidden gap-2 px-1 pb-2 text-xs font-medium text-neutral-500 lg:grid lg:grid-cols-[4rem_1.1fr_1.7fr_.7fr_.9fr_10rem]">
+        <div class="hidden gap-2 px-1 pb-2 text-xs font-medium text-neutral-500 lg:grid lg:grid-cols-[4rem_1.1fr_1.7fr_.7fr_.9fr_13rem]">
           <span>排序</span>
           <span>显示名称</span>
           <span>启动文件或脚本</span>
@@ -63,16 +63,16 @@
           <span>操作</span>
         </div>
         <div class="space-y-2">
-          <div v-for="(item, index) in menu.items" :key="itemKey(item, index)" class="grid gap-2 rounded-md border border-neutral-200 p-2 lg:grid-cols-[4rem_1.1fr_1.7fr_.7fr_.9fr_10rem]">
+          <div v-for="(item, index) in menu.items" :key="itemKey(item, index)" class="grid gap-2 rounded-md border border-neutral-200 p-2 lg:grid-cols-[4rem_1.1fr_1.7fr_.7fr_.9fr_13rem]">
             <input v-model.number="item.sort_order" class="input" type="number" min="1" />
             <input v-model.trim="item.title" class="input" placeholder="Run boot.ipxe" />
             <input v-model.trim="item.boot_file" class="input" placeholder="%dynamicboot%=boot.ipxe" />
             <input v-model.trim="item.pxe_type" class="input" placeholder="8005" />
             <input v-model.trim="item.server_ip" class="input" placeholder="%tftpserver%" />
-            <div class="flex flex-wrap items-center justify-end gap-2">
-              <label class="flex items-center gap-1 text-sm"><input v-model="item.enabled" type="checkbox" /> 启用</label>
-              <button class="btn h-9 px-2" :disabled="index === 0" @click="moveItem(menu, index, -1)">上移</button>
-              <button class="btn btn-danger h-9 px-2" @click="removeItem(menu, index)">删除</button>
+            <div class="flex flex-nowrap items-center justify-end gap-2">
+              <label class="flex shrink-0 items-center gap-1 text-sm"><input v-model="item.enabled" type="checkbox" /> 启用</label>
+              <button class="btn h-9 shrink-0 px-2" :disabled="index === 0" @click="moveItem(menu, index, -1)">上移</button>
+              <button class="btn btn-danger h-9 shrink-0 px-2" @click="removeItem(menu, index)">删除</button>
             </div>
           </div>
         </div>
@@ -95,6 +95,7 @@ const saving = ref(false)
 const message = ref('')
 const error = ref(false)
 const names: Record<string, string> = { uefi: 'UEFI Boot Menu', ipxe: 'iPXE Menu' }
+const menuOrder: Record<string, number> = { ipxe: 1, uefi: 2 }
 
 async function load() {
   loading.value = true
@@ -163,7 +164,7 @@ function normalizeMenus(rows: Menu[] | unknown) {
   const list = Array.isArray(rows) ? rows : []
   const normalized = list.map((menu) => ({ ...menu, items: Array.isArray(menu.items) ? menu.items.map(sanitizeItem) : [] }))
   for (const menu of normalized) normalizeItemOrder(menu)
-  return normalized
+  return normalized.sort((a, b) => (menuOrder[a.menu_type] ?? 99) - (menuOrder[b.menu_type] ?? 99))
 }
 
 function normalizeItemOrder(menu: Menu) {
@@ -184,14 +185,14 @@ function sanitizeItem(item: MenuItem) {
 
 function defaultMenus(): Menu[] {
   return [
-    { menu_type: 'uefi', enabled: true, prompt: 'UEFI Boot Menu', timeout_seconds: 6, randomize_timeout: false, items: [
-      { sort_order: 1, title: 'iPXE UEFI x64', boot_file: 'ipxe-x86_64.efi', pxe_type: '8002', server_ip: '%tftpserver%', enabled: true },
-      { sort_order: 2, title: 'Boot Local Disk', boot_file: '', pxe_type: '0000', server_ip: '0.0.0.0', enabled: true }
-    ] },
     { menu_type: 'ipxe', enabled: true, prompt: 'iPXE Boot Menu', timeout_seconds: 6, randomize_timeout: false, items: [
       { sort_order: 1, title: 'Run boot.ipxe', boot_file: '%dynamicboot%=boot.ipxe', pxe_type: '0001', server_ip: '%tftpserver%', enabled: true },
       { sort_order: 2, title: 'netboot.xyz', boot_file: 'https://boot.netboot.xyz', pxe_type: '8005', server_ip: '%tftpserver%', enabled: true },
       { sort_order: 3, title: 'Boot Local Disk', boot_file: '', pxe_type: '0000', server_ip: '0.0.0.0', enabled: true }
+    ] },
+    { menu_type: 'uefi', enabled: false, prompt: 'UEFI Boot Menu', timeout_seconds: 6, randomize_timeout: false, items: [
+      { sort_order: 1, title: 'iPXE UEFI x64', boot_file: 'ipxe-x86_64.efi', pxe_type: '8002', server_ip: '%tftpserver%', enabled: true },
+      { sort_order: 2, title: 'Boot Local Disk', boot_file: '', pxe_type: '0000', server_ip: '0.0.0.0', enabled: true }
     ] }
   ]
 }
@@ -202,14 +203,14 @@ function modeText(type: string) {
 
 function menuHint(type: string) {
   return type === 'uefi'
-    ? 'UEFI 客户端在完整 DHCP 模式下可使用原生 PXE 菜单。'
+    ? '默认关闭以提高兼容性；关闭时完整 DHCP 会直接按架构下发 EFI。'
     : 'iPXE 菜单由 dynamic.ipxe 生成，适合链式加载本地或公网启动脚本。'
 }
 
 function menuNote(type: string) {
   return type === 'ipxe'
     ? 'iPXE 支持 %dynamicboot%=boot.ipxe；相对路径从 HTTP Boot 目录读取，URL 会直接 chain。'
-    : 'UEFI 类型码需要保持唯一；服务器 IP 可用 %tftpserver% 表示当前通告 IP。'
+    : '原生菜单依赖固件支持 Option 43；类型码需要保持唯一，服务器 IP 可用 %tftpserver% 表示当前通告 IP。'
 }
 
 function itemKey(item: MenuItem, index: number) {

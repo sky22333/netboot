@@ -76,6 +76,41 @@ func TestIPXEClientSeenStatus(t *testing.T) {
 	}
 }
 
+func TestCompleteDHCPUEFIDirectBootWhenNativeMenuDisabled(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.DHCP.Mode = "dhcp"
+	settings.DHCP.PoolStart = "192.168.1.200"
+	settings.DHCP.PoolEnd = "192.168.1.200"
+	settings.DHCP.Router = "192.168.1.1"
+	settings.DHCP.DNS = []string{"192.168.1.1"}
+	settings.BootFiles.UEFIX64 = "ipxe-x86_64.efi"
+	if err := store.SaveMenus(ctx, []storage.Menu{{
+		MenuType:       "uefi",
+		Enabled:        false,
+		Prompt:         "UEFI",
+		TimeoutSeconds: 6,
+		Items: []storage.MenuItem{
+			{SortOrder: 1, Title: "iPXE UEFI x64", BootFile: "ipxe-x86_64.efi", PXEType: "8002", ServerIP: "%tftpserver%", Enabled: true},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	req := testPXEPacket(1,
+		testOpt(60, []byte("PXEClient")),
+		testOpt(93, []byte{0, 7}),
+	)
+
+	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false, newLeasePool(settings))
+	opts := parseOptions(resp[240:])
+	if got := string(opts[67]); got != "ipxe-x86_64.efi\x00" {
+		t.Fatalf("expected direct UEFI boot file, got %q", got)
+	}
+	if option43HasSuboption(opts[43], 9) || option43HasSuboption(opts[43], 10) {
+		t.Fatalf("expected no native PXE menu option, got %x", opts[43])
+	}
+}
+
 func TestExecutableBootFileUsesArchitectureSpecificNetbootFiles(t *testing.T) {
 	ctx := context.Background()
 	_, settings := testStoreAndSettings(t, ctx)
@@ -128,6 +163,23 @@ func mustWriteFile(t *testing.T, path string) {
 	if err := os.WriteFile(path, []byte("boot"), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func option43HasSuboption(raw []byte, code byte) bool {
+	for i := 0; i+1 < len(raw); {
+		if raw[i] == 255 {
+			return false
+		}
+		ln := int(raw[i+1])
+		if i+2+ln > len(raw) {
+			return false
+		}
+		if raw[i] == code {
+			return true
+		}
+		i += 2 + ln
+	}
+	return false
 }
 
 type testOption struct {

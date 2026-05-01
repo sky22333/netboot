@@ -78,9 +78,6 @@ func (s *Store) EnsureDefaults(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := s.ensureDefaultActions(ctx); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -93,7 +90,7 @@ func (s *Store) DefaultSettings() ServiceSettings {
 		TFTP:       TFTPSettings{Enabled: true, Root: filepath.Join(s.dataDir, "boot", "tftp"), AllowUpload: false, MaxTransfers: 64, BlockSizeMax: 1428, RetryCount: 5, TimeoutSeconds: 3, MaxUploadBytes: 256 * 1024 * 1024},
 		HTTPBoot:   HTTPBootSettings{Enabled: true, Addr: ":80", Root: filepath.Join(s.dataDir, "boot", "http"), DirectoryListing: true, RangeRequests: true},
 		SMB:        SMBSettings{Enabled: false, Root: filepath.Join(s.dataDir, "smb"), ShareName: "pxe", Permissions: "read"},
-		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi", IPXE: "boot.ipxe"},
+		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi"},
 		NetbootXYZ: NetbootXYZSettings{Enabled: true, DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
 		Torrent:    TorrentSettings{Enabled: false, Addr: ":6969"},
 		Security:   SecuritySettings{AdminAuthEnabled: true, AllowRemoteAdmin: false},
@@ -246,9 +243,6 @@ func (s *Store) normalizeSettings(settings *ServiceSettings) {
 	}
 	if settings.Torrent.Addr == "" {
 		settings.Torrent.Addr = defaults.Torrent.Addr
-	}
-	if settings.BootFiles.IPXE == "" {
-		settings.BootFiles.IPXE = defaults.BootFiles.IPXE
 	}
 	if settings.BootFiles.BIOS == "" {
 		settings.BootFiles.BIOS = defaults.BootFiles.BIOS
@@ -550,15 +544,6 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("用户不存在")
-	}
-	return nil
-}
-
-func (s *Store) ensureDefaultActions(ctx context.Context) error {
-	var count int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM client_actions`).Scan(&count)
-	if count > 0 {
-		return nil
 	}
 	return nil
 }

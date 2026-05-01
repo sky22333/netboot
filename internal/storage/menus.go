@@ -7,7 +7,7 @@ import (
 
 func (s *Store) defaultMenus() []Menu {
 	return []Menu{
-		{MenuType: "uefi", Enabled: true, Prompt: "UEFI Boot Menu", TimeoutSeconds: 6, Items: []MenuItem{
+		{MenuType: "uefi", Enabled: false, Prompt: "UEFI Boot Menu", TimeoutSeconds: 6, Items: []MenuItem{
 			{SortOrder: 1, Title: "iPXE UEFI x64", BootFile: "ipxe-x86_64.efi", PXEType: "8002", ServerIP: "%tftpserver%", Enabled: true},
 			{SortOrder: 2, Title: "Boot Local Disk", BootFile: "", PXEType: "0000", ServerIP: "0.0.0.0", Enabled: true},
 		}},
