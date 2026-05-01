@@ -14,6 +14,7 @@
 * 🗂️ **在线文件管理**：内置文件工作台，支持 HTTP Boot、TFTP、netboot.xyz 目录浏览、上传、新建、重命名、删除、种子制作和小型文本脚本在线编辑。
 * 🧰 **客户端维护**：支持客户端静态绑定、待认领、Wake-on-LAN 多目标唤醒，以及按服务器平台生成的 Ping/HTTP 检查操作模板。
 * 💾 **轻量级存储**：底层使用纯 Go SQLite（默认 `data/pxe.db`），零外部数据库依赖。
+* 🧩 **iPXE 固件构建**：提供独立 GitHub Actions，可用仓库根目录 `embed.ipxe` 构建 Legacy BIOS、UEFI x86_64 和 UEFI ARM64 固件。
 
 ## 运行
 
@@ -52,6 +53,18 @@ data/
 ├─ smb/
 └─ exports/
 ```
+
+## iPXE 固件
+
+仓库根目录的 `embed.ipxe` 是用于固件编译的内置 iPXE 脚本，默认提供 Debian 12、Alpine Linux 公网安装入口、iPXE Shell 和退出项。`.github/workflows/build-boot.yml` 可手动触发，基于 iPXE v2.0.0 开启 HTTPS 和 CA 信任后生成：
+
+```text
+undionly.kpxe
+ipxe-x86_64.efi
+ipxe-arm64.efi
+```
+
+这些固件产物是辅助启动文件，不会由应用本体自动生成。应用运行时仍通过 DHCP/ProxyDHCP、TFTP、HTTP Boot、`/dynamic.ipxe` 和 `local-vars.ipxe` 完成客户端引导。
 
 更多内容见 [docs](./docs)。
 

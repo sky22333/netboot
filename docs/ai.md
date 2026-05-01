@@ -31,6 +31,10 @@
 
 ```text
 pxe/
+├─ embed.ipxe               # iPXE 固件内置脚本
+├─ .github/workflows/
+│  ├─ release.yml           # 应用本体多平台发布
+│  └─ build-boot.yml        # iPXE 固件构建
 ├─ cmd/pxe/                 # 程序入口
 ├─ internal/
 │  ├─ app/                  # 应用装配、服务生命周期
@@ -113,6 +117,35 @@ data/
 - UEFI 原生菜单和 iPXE 动态菜单共用 `internal/bootmenu` 计算 timeout；启用随机等待时每次生成菜单都会得到 0 到配置秒数之间的随机值。
 - 下发给 PXE/iPXE 客户端的菜单标题和菜单项使用英文/ASCII，避免固件控制台乱码。
 - netboot.xyz 下载完成后会按需生成 `data/boot/tftp/local-vars.ipxe`；文件已存在时不覆盖。该脚本提供英文菜单，可从公网镜像或通告 IP 对应的内网 HTTP 路径启动 Debian 12 和 Alpine Linux，内网地址会自动使用当前 HTTP Boot 端口。
+
+## iPXE 固件构建链路
+
+仓库根目录的 `embed.ipxe` 是给 iPXE 固件编译使用的内置脚本，不是运行时动态生成脚本。当前脚本行为：
+
+- 设置 `menu-timeout=60000`。
+- 设置公网镜像 `https://mirrors.tuna.tsinghua.edu.cn`。
+- 菜单包含 `Public Install Debian 12`、`Public Install Alpine Linux`、`iPXE Shell` 和 `Continue netboot.xyz`。
+- Debian 和 Alpine 项直接从公网镜像加载 kernel/initrd。
+- 启动失败后进入 iPXE shell，退出项执行 `exit`。
+
+`.github/workflows/build-boot.yml` 是独立的 iPXE 固件构建流水线：
+
+- 手动触发，可选 `tag_name`；非空时会发布到 GitHub Release。
+- 下载 iPXE v2.0.0 源码。
+- 修改 `src/config/general.h`，开启 `DOWNLOAD_PROTO_HTTPS`。
+- 下载 curl CA bundle 到 `ca-bundle.crt`，构建时通过 `TRUST=ca-bundle.crt` 注入。
+- 复制仓库根目录 `embed.ipxe`，构建时通过 `EMBED=embed.ipxe` 注入。
+- 输出 `undionly.kpxe`、`ipxe-x86_64.efi`、`ipxe-arm64.efi`。
+
+这条链路只负责生成第一阶段 iPXE 固件，不会启动服务，也不会自动写入 `data/boot/netboot`。产物需要由部署者按客户端架构放到运行时目录，或改名为当前 DHCP 选文件逻辑会下发的文件名。
+
+需要明确区分三类脚本：
+
+- `embed.ipxe`：编译进固件，固件启动后立即执行；修改后必须重新构建固件。
+- `data/boot/tftp/local-vars.ipxe`：netboot.xyz 页面按需生成的本地变量/钩子脚本，已存在时不覆盖。
+- `/dynamic.ipxe`：HTTP Boot 或管理 Web 在运行时生成的动态菜单脚本，依赖数据库菜单、客户端和服务配置。
+
+当前 ARM64 状态：流水线能构建 `ipxe-arm64.efi`，DHCP 代码也能识别 option 93 的 ARM UEFI 架构值，但服务配置只有 UEFI32/UEFI64 字段，没有独立 ARM64 EFI 字段。并且只要 `data/boot/netboot/netboot.xyz.efi` 存在，所有 UEFI 架构都会优先拿到该文件。因此混合 x86_64/ARM64 UEFI 网络中必须人工保证文件名和架构匹配，否则可能出现固件成功拿到文件但无法执行的情况。
 
 ## PXE 客户端网络交互细节
 
@@ -310,6 +343,7 @@ HTTP Boot 服务由 `internal/httpboot` 提供：
 
 - 修改 DHCP 响应前，先确认 option 53、54、60、66、67、77、93、97、175 的语义。
 - 修改 boot file 选择时，必须考虑 BIOS、UEFI32、UEFI64、ARM UEFI 的文件架构匹配。
+- 修改 `embed.ipxe` 或 iPXE 固件产物名称时，必须同步运行时文档，避免部署者把固件内置菜单、netboot.xyz 本地钩子和 `/dynamic.ipxe` 误认为同一条链路。
 - 不要把 UEFI Option 43 菜单当作唯一菜单能力；iPXE 动态菜单是主路径。
 - 增加新固件兼容策略时，应补 DHCP 响应 golden test 或抓包说明。
 - 排查客户端不响应时，优先抓包看客户端是否收到 `yiaddr/siaddr/filename/option66/option67`，以及是否继续发 TFTP RRQ。
@@ -416,7 +450,8 @@ GitHub Actions：
 
 - `.github/workflows/release.yml` 手动触发。
 - 构建 Windows、Linux、macOS 多平台二进制。
-- 上传 zip/tar.gz
+- 上传 zip/tar.gz。
+- `.github/workflows/build-boot.yml` 手动构建 iPXE 固件，输出 `undionly.kpxe`、`ipxe-x86_64.efi`、`ipxe-arm64.efi`。
 
 ## 离线自托管
 
