@@ -13,8 +13,9 @@ permissions:
   contents: write
 
 jobs:
-  checks:
-    name: 质量检查
+  # 前端构建与质量检查
+  checks-and-frontend:
+    name: 质量检查与前端构建
     runs-on: ubuntu-latest
     steps:
       - name: 拉取代码
@@ -30,13 +31,12 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: latest
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
 
-      - name: 安装前端依赖
-        run: npm ci
-        working-directory: web
-
-      - name: 前端类型检查与构建
+      - name: 安装前端依赖并构建
         run: |
+          npm ci
           npm run typecheck
           npm run build
         working-directory: web
@@ -46,9 +46,17 @@ jobs:
           go test ./...
           go vet ./...
 
+      - name: 暂存前端构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: internal/web/dist
+          retention-days: 1
+
+  # 后端矩阵交叉编译
   build:
     name: 构建 ${{ matrix.goos }}-${{ matrix.goarch }}
-    needs: checks
+    needs: checks-and-frontend
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -91,18 +99,12 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          check-latest: true
 
-      - name: 设置 Node.js
-        uses: actions/setup-node@v6
+      - name: 下载前端构建产物
+        uses: actions/download-artifact@v8
         with:
-          node-version: latest
-
-      - name: 安装并构建前端
-        run: |
-          npm ci
-          npm run build
-        working-directory: web
+          name: frontend-dist
+          path: internal/web/dist
 
       - name: 编译二进制
         env:
@@ -120,7 +122,7 @@ jobs:
       - name: 打包
         shell: bash
         run: |
-          NAME="pxe-${{ github.event.inputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
+          NAME="pxe-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
           mkdir -p release/out
           if [ "${{ matrix.goos }}" = "windows" ]; then
             (cd release/package && zip -9 -r "../out/${NAME}.zip" .)
@@ -134,6 +136,7 @@ jobs:
           name: pxe-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
           path: release/out/*
           if-no-files-found: error
+          retention-days: 1
 
   release:
     name: 创建 GitHub Release
@@ -145,6 +148,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+          pattern: pxe-*
 
       - name: 创建发布
         uses: softprops/action-gh-release@v3
