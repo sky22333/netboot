@@ -133,7 +133,7 @@ data/
 - 手动触发，可选 `tag_name`；非空时会发布到 GitHub Release。
 - 下载 iPXE v2.0.0 源码。
 - 修改 `src/config/general.h`，开启 `DOWNLOAD_PROTO_HTTPS`。
-- 下载 curl CA bundle 到 `ca-bundle.crt`，构建时通过 `TRUST=ca-bundle.crt` 注入。
+- 不传入 `TRUST=` 自定义 CA bundle，使用 iPXE 默认公共 CA/crosscert 信任机制；公网 HTTPS 优先走该机制，私有 CA 或完全离线 HTTPS 需要单独拆分并注入证书链。
 - 复制仓库根目录 `embed.ipxe`，构建时通过 `EMBED=embed.ipxe` 注入。
 - 输出 `undionly.kpxe`、`ipxe-x86_64.efi`、`ipxe-arm64.efi`。
 

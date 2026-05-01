@@ -56,7 +56,7 @@ data/
 
 ## iPXE 固件
 
-仓库根目录的 `embed.ipxe` 是用于固件编译的内置 iPXE 脚本，默认提供 Debian 12、Alpine Linux 公网安装入口、iPXE Shell 和退出项。`.github/workflows/build-boot.yml` 可手动触发，基于 iPXE v2.0.0 开启 HTTPS 和 CA 信任后生成：
+仓库根目录的 `embed.ipxe` 是用于固件编译的内置 iPXE 脚本，默认提供 Debian 12、Alpine Linux 公网安装入口、iPXE Shell 和退出项。`.github/workflows/build-boot.yml` 可手动触发，基于 iPXE v2.0.0 开启 HTTPS，并使用 iPXE 默认公共 CA/crosscert 机制生成：
 
 ```text
 undionly.kpxe

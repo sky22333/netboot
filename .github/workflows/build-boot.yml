@@ -35,11 +35,6 @@ jobs:
         run: |
           sed -i 's/#undef.*DOWNLOAD_PROTO_HTTPS/#define DOWNLOAD_PROTO_HTTPS/g' ipxe-2.0.0/src/config/general.h
 
-      - name: 注入根证书
-        run: |
-          wget -O ca-bundle.crt https://curl.se/ca/cacert.pem
-          mv ca-bundle.crt ipxe-2.0.0/src/
-
         # 使用仓库根目录的embed.ipxe，如果是子目录则在前面添加目录
       - name: 注入内置脚本
         run: |
@@ -52,19 +47,19 @@ jobs:
       - name: 编译传统 BIOS (Legacy) 镜像
         working-directory: ipxe-2.0.0/src
         run: |
-          make bin/undionly.kpxe EMBED=embed.ipxe TRUST=ca-bundle.crt
+          make bin/undionly.kpxe EMBED=embed.ipxe
           cp bin/undionly.kpxe ../../undionly.kpxe
 
       - name: 编译现代 UEFI x86_64 (64位) 镜像
         working-directory: ipxe-2.0.0/src
         run: |
-          make bin-x86_64-efi/ipxe.efi EMBED=embed.ipxe TRUST=ca-bundle.crt
+          make bin-x86_64-efi/ipxe.efi EMBED=embed.ipxe
           cp bin-x86_64-efi/ipxe.efi ../../ipxe-x86_64.efi
 
       - name: 编译 UEFI ARM64 (AArch64) 镜像
         working-directory: ipxe-2.0.0/src
         run: |
-          make CROSS_COMPILE=aarch64-linux-gnu- bin-arm64-efi/ipxe.efi EMBED=embed.ipxe TRUST=ca-bundle.crt
+          make CROSS_COMPILE=aarch64-linux-gnu- bin-arm64-efi/ipxe.efi EMBED=embed.ipxe
           cp bin-arm64-efi/ipxe.efi ../../ipxe-arm64.efi
 
       - name: 保存构建产物
