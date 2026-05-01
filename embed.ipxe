@@ -1,0 +1,35 @@
+#!ipxe
+set menu-timeout 60000
+set public-mirror https://mirrors.tuna.tsinghua.edu.cn
+
+menu PXE Install Menu
+item public_debian Public Install Debian 12
+item public_alpine Public Install Alpine Linux
+item shell iPXE Shell
+item exit Continue netboot.xyz
+choose --timeout ${menu-timeout} selected || goto exit
+goto ${selected}
+
+:public_debian
+imgfree
+kernel ${public-mirror}/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux initrd=initrd.gz ip=dhcp
+initrd ${public-mirror}/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz
+boot || goto failed
+
+:public_alpine
+imgfree
+kernel ${public-mirror}/alpine/v3.23/releases/x86_64/netboot/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main
+initrd ${public-mirror}/alpine/v3.23/releases/x86_64/netboot/initramfs-lts
+boot || goto failed
+
+:shell
+shell
+goto exit
+
+:failed
+echo Boot failed. Check network, files and boot parameters.
+sleep 5
+shell
+
+:exit
+exit
