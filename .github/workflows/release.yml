@@ -1,4 +1,4 @@
-name: 手动构建与发布
+name: 构建与发布
 
 on:
   workflow_dispatch:
