@@ -20,14 +20,11 @@
 
 [Releases](https://github.com/sky22333/netboot/releases)页面下载构建好的二进制文件
 
-win系统直接双击打开，linux系统需要使用命令行启动。
+win系统直接双击打开，linux系统需要使用`./pxe`命令行启动。
 
-```
-./pxe
-```
+可以不带参数直接启动，默认数据会自动生成在当前路径的data目录。
 
-不带参数启动时，程序会切换到可执行文件所在目录，并在当前目录自动创建`data`目录。常用参数（可选项）：
-
+常用参数（可选项）：
 ```text
 --config     指定 pxe.toml
 --data-dir   指定数据目录
@@ -38,35 +35,7 @@ win系统直接双击打开，linux系统需要使用命令行启动。
 
 启动成功后，会自动打开默认浏览器访问管理面板，终端环境没有浏览器的场景则不会打开。
 
-## 运行时目录
-
-```text
-data/
-├─ pxe.toml
-├─ pxe.db
-├─ secret.key
-├─ logs/pxe.log
-├─ boot/
-│  ├─ netboot/  # netboot.xyz 下载文件
-│  ├─ tftp/     # 自定义 TFTP 文件，可为空
-│  └─ http/     # 自定义 HTTP Boot 文件，可为空
-├─ smb/
-└─ exports/
-```
-
-## iPXE 固件
-
-仓库根目录的 `embed.ipxe` 是用于固件编译的内置 iPXE 脚本，默认提供 Debian 12、Alpine Linux 公网安装入口、iPXE Shell 和退出项。`.github/workflows/build-boot.yml` 可手动触发，基于 iPXE v2.0.0 开启 HTTPS，并使用 iPXE 默认公共 CA/crosscert 机制生成：
-
-```text
-undionly.kpxe
-ipxe-x86_64.efi
-ipxe-arm64.efi
-```
-
-这些固件产物是辅助启动文件，不会由应用本体自动生成。应用运行时仍通过 DHCP/ProxyDHCP、TFTP、HTTP Boot、`/dynamic.ipxe` 和 `local-vars.ipxe` 完成客户端引导，并按 BIOS、UEFI IA32、UEFI x64、UEFI ARM32、UEFI ARM64 分别选择启动文件。
-
-更多内容见 [docs](./docs)。
+### 详细文档见 [docs](docs/使用文档.md)
 
 ## 页面预览
 
