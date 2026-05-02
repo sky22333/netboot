@@ -116,11 +116,14 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 			r.Header.Del("Range")
 			w = noRangeResponseWriter{ResponseWriter: w}
 		}
+		started := time.Now()
+		rangeHeader := r.Header.Get("Range")
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		http.ServeContent(rec, r, info.Name(), info.ModTime(), f)
-		if r.Method == http.MethodGet && rec.status < 400 {
-			_ = store.AddEvent(r.Context(), "info", "httpboot", "客户端请求 HTTP 文件", map[string]any{"path": rel, "size": info.Size(), "client": clientIP(r), "status": rec.status})
-			events.Publish("info", "httpboot", fmt.Sprintf("HTTP 文件已发送: %s size=%d client=%s", rel, info.Size(), clientIP(r)))
+		if rec.status < 400 {
+			fields := map[string]any{"path": rel, "method": r.Method, "status": rec.status, "range": rangeHeader, "sent": rec.written, "total": info.Size(), "duration_ms": time.Since(started).Milliseconds(), "client": clientIP(r)}
+			_ = store.AddEvent(r.Context(), "info", "httpboot", "客户端请求 HTTP 文件", fields)
+			events.Publish("info", "httpboot", httpFileSentMessage(rel, r.Method, rec.status, rangeHeader, rec.written, info.Size(), time.Since(started), clientIP(r)))
 		}
 	})
 }
@@ -139,12 +142,35 @@ func resolveReadPath(settings storage.ServiceSettings, requestPath string) (stri
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status  int
+	written int64
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(p []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(p)
+	r.written += int64(n)
+	return n, err
+}
+
+func httpFileSentMessage(path, method string, status int, rangeHeader string, sent, total int64, duration time.Duration, client string) string {
+	parts := []string{
+		fmt.Sprintf("HTTP 文件已响应: %s", path),
+		"method=" + method,
+		fmt.Sprintf("status=%d", status),
+		fmt.Sprintf("sent=%d", sent),
+		fmt.Sprintf("total=%d", total),
+		"duration=" + duration.Round(time.Millisecond).String(),
+		"client=" + client,
+	}
+	if rangeHeader != "" {
+		parts = append(parts[:3], append([]string{"range=" + rangeHeader}, parts[3:]...)...)
+	}
+	return strings.Join(parts, " ")
 }
 
 type noRangeResponseWriter struct {

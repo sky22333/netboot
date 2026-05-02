@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pxe/internal/observability"
 	"pxe/internal/storage"
@@ -82,6 +83,24 @@ func TestFileHandlerServesNetbootFile(t *testing.T) {
 	fileHandler(settings, store, observability.NewHub()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "efi") {
 		t.Fatalf("expected netboot file response, status=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHTTPFileSentMessageIncludesTransferDetails(t *testing.T) {
+	msg := httpFileSentMessage("win10.iso", http.MethodGet, http.StatusPartialContent, "bytes=0-1023", 1024, 5044211712, 150*time.Millisecond, "10.43.180.161")
+	for _, want := range []string{
+		"HTTP 文件已响应: win10.iso",
+		"method=GET",
+		"status=206",
+		"range=bytes=0-1023",
+		"sent=1024",
+		"total=5044211712",
+		"duration=150ms",
+		"client=10.43.180.161",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected message to contain %q, got %q", want, msg)
+		}
 	}
 }
 
