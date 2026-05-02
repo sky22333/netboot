@@ -25,3 +25,21 @@ func TestLocalVarsScriptFallsBackToNextServerWithPort(t *testing.T) {
 		t.Fatalf("expected next-server fallback to include custom HTTP Boot port, got:\n%s", script)
 	}
 }
+
+func TestLocalVarsScriptIncludesCompatibilityGuards(t *testing.T) {
+	script := LocalVarsScript("192.168.137.1", ":80")
+	for _, want := range []string{
+		"set lang en",
+		"isset ${pxe_lang} && set lang ${pxe_lang} ||",
+		"isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||",
+		"iseq ${buildarch} arm64 && set debian_arch arm64 ||",
+		"cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386",
+		"item show_info Show Boot Information",
+		"echo proxydhcp next-server: ${proxydhcp/next-server}",
+		"iseq ${platform} efi && exit ||",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected generated script to contain %q, got:\n%s", want, script)
+		}
+	}
+}

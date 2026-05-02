@@ -2,35 +2,113 @@
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 60000
 set public-mirror https://mirrors.tuna.tsinghua.edu.cn
+set lang en
+isset ${pxe_lang} && set lang ${pxe_lang} ||
+isset ${buildarch} && set arch ${buildarch} || set arch unknown
+iseq ${buildarch} x86_64 && set debian_arch amd64 ||
+iseq ${buildarch} i386 && set debian_arch i386 ||
+iseq ${buildarch} arm64 && set debian_arch arm64 ||
+isset ${debian_arch} || cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386
+iseq ${debian_arch} amd64 && set alpine_arch x86_64 ||
+iseq ${debian_arch} i386 && set alpine_arch x86 ||
+iseq ${debian_arch} arm64 && set alpine_arch aarch64 ||
+isset ${alpine_arch} || set alpine_arch x86_64
+iseq ${platform} efi && set boot_mode EFI || set boot_mode BIOS
 
-menu PXE Install Menu
-item public_debian Public Install Debian 12
-item public_alpine Public Install Alpine Linux
+:main_menu
+iseq ${lang} cn && goto menu_cn || goto menu_en
+
+:menu_en
+menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${boot_mode}
+item --gap -- OS Installation
+item public_debian Debian 12 (Bookworm) Stable Install
+item public_alpine Alpine Linux v3.23 Lightweight Install
+item --gap -- Tools
+item show_info Show Boot Information
 item shell iPXE Shell
-item exit Exit iPXE
-choose --timeout ${menu-timeout} selected || goto exit
+item exit Exit and Boot Local Disk
+choose --timeout ${menu-timeout} --default public_debian selected || goto exit
+goto ${selected}
+
+:menu_cn
+menu Embedded iPXE Boot Menu
+item --gap -- OS Installation
+item public_debian Debian 12 Install
+item public_alpine Alpine Linux Install
+item --gap -- Tools
+item show_info Show Boot Information
+item shell iPXE Shell
+item exit Exit and Boot Local Disk
+choose --timeout ${menu-timeout} --default public_debian selected || goto exit
 goto ${selected}
 
 :public_debian
+echo Starting Debian 12 installer...
+echo arch=${debian_arch} mode=${boot_mode}
 imgfree
-kernel ${public-mirror}/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux initrd=initrd.gz ip=dhcp
-initrd ${public-mirror}/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz
+set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp
+initrd ${debian-base}/initrd.gz
 boot || goto failed
 
 :public_alpine
+echo Starting Alpine Linux installer...
+echo arch=${alpine_arch} mode=${boot_mode}
 imgfree
-kernel ${public-mirror}/alpine/v3.23/releases/x86_64/netboot/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main
-initrd ${public-mirror}/alpine/v3.23/releases/x86_64/netboot/initramfs-lts
+set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
+kernel ${alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-lts
+initrd ${alpine-base}/initramfs-lts
 boot || goto failed
 
+:show_info
+echo
+echo Embedded iPXE boot information
+echo buildarch: ${buildarch}
+echo debian_arch: ${debian_arch}
+echo alpine_arch: ${alpine_arch}
+echo platform: ${platform}
+echo boot mode: ${boot_mode}
+echo mac: ${net0/mac}
+echo ip: ${net0/ip}
+echo next-server: ${next-server}
+echo proxydhcp next-server: ${proxydhcp/next-server}
+echo filename: ${filename}
+echo proxydhcp filename: ${proxydhcp/filename}
+echo mirror: ${public-mirror}
+sleep 8
+goto main_menu
+
 :shell
+echo Entering iPXE shell. Type "exit" to return to the menu.
 shell
-goto exit
+goto main_menu
 
 :failed
-echo Boot failed. Check network, files and boot parameters.
+imgfree
+echo
+echo ##############################################
+echo #              BOOT FAILED                   #
+echo ##############################################
+echo
+echo Possible issues:
+echo   - Network connectivity
+echo   - File not found on mirror
+echo   - Unsupported architecture
+echo   - Incorrect boot parameters
+echo
+echo Current network status:
+echo   IP: ${net0/ip}
+echo   Gateway: ${net0/gateway}
+echo   Mirror: ${public-mirror}
+echo   Arch: ${debian_arch}
 sleep 5
 shell
 
 :exit
-exit
+iseq ${platform} efi && exit ||
+sanboot --no-describe --drive 0x80 || goto local_boot_failed
+
+:local_boot_failed
+echo Local boot failed, entering shell...
+sleep 3
+shell

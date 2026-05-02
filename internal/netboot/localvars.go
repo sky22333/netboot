@@ -11,13 +11,6 @@ import (
 
 const LocalVarsFile = "local-vars.ipxe"
 
-const (
-	debianKernelPath = "/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux"
-	debianInitrdPath = "/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz"
-	alpineKernelPath = "/alpine/v3.23/releases/x86_64/netboot/vmlinuz-lts"
-	alpineInitrdPath = "/alpine/v3.23/releases/x86_64/netboot/initramfs-lts"
-)
-
 func EnsureLocalVars(tftpRoot, advertiseIP, httpAddr string, events *observability.Hub) (string, bool, error) {
 	if err := os.MkdirAll(tftpRoot, 0755); err != nil {
 		return "", false, err
@@ -42,47 +35,103 @@ func EnsureLocalVars(tftpRoot, advertiseIP, httpAddr string, events *observabili
 func LocalVarsScript(advertiseIP, httpAddr string) string {
 	base := booturl.HTTPBase(advertiseIP, httpAddr)
 	return fmt.Sprintf(`#!ipxe
+isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 60000
 set public-mirror https://mirrors.tuna.tsinghua.edu.cn
 set local-mirror %s
+set lang en
+isset ${pxe_lang} && set lang ${pxe_lang} ||
+isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||
+isset ${buildarch} && set arch ${buildarch} || set arch unknown
+iseq ${buildarch} x86_64 && set debian_arch amd64 ||
+iseq ${buildarch} i386 && set debian_arch i386 ||
+iseq ${buildarch} arm64 && set debian_arch arm64 ||
+isset ${debian_arch} || cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386
+iseq ${debian_arch} amd64 && set alpine_arch x86_64 ||
+iseq ${debian_arch} i386 && set alpine_arch x86 ||
+iseq ${debian_arch} arm64 && set alpine_arch aarch64 ||
+isset ${alpine_arch} || set alpine_arch x86_64
 
+:main_menu
+iseq ${lang} cn && goto menu_cn || goto menu_en
+
+:menu_en
 menu PXE Install Menu
+item --gap -- OS Installation
 item public_debian Public Install Debian 12
 item public_alpine Public Install Alpine Linux
 item local_debian Local Install Debian 12
 item local_alpine Local Install Alpine Linux
+item --gap -- Tools
+item show_info Show Boot Information
 item shell iPXE Shell
 item exit Continue netboot.xyz
-choose --timeout ${menu-timeout} selected || goto exit
+choose --timeout ${menu-timeout} --default public_debian selected || goto exit
+goto ${selected}
+
+:menu_cn
+menu PXE Boot Menu
+item --gap -- OS Installation
+item public_debian Debian 12 Install
+item public_alpine Alpine Linux Install
+item local_debian Local Debian 12 Install
+item local_alpine Local Alpine Linux Install
+item --gap -- Tools
+item show_info Show Boot Information
+item shell iPXE Shell
+item exit Continue netboot.xyz
+choose --timeout ${menu-timeout} --default public_debian selected || goto exit
 goto ${selected}
 
 :public_debian
 imgfree
-kernel ${public-mirror}%s initrd=initrd.gz ip=dhcp
-initrd ${public-mirror}%s
+set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp
+initrd ${debian-base}/initrd.gz
 boot || goto failed
 
 :public_alpine
 imgfree
-kernel ${public-mirror}%s initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main
-initrd ${public-mirror}%s
+set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
+kernel ${alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-lts
+initrd ${alpine-base}/initramfs-lts
 boot || goto failed
 
 :local_debian
 imgfree
-kernel ${local-mirror}%s initrd=initrd.gz ip=dhcp
-initrd ${local-mirror}%s
+set local-debian-base ${local-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+kernel ${local-debian-base}/linux initrd=initrd.gz ip=dhcp
+initrd ${local-debian-base}/initrd.gz
 boot || goto failed
 
 :local_alpine
 imgfree
-kernel ${local-mirror}%s initrd=initramfs-lts ip=dhcp alpine_repo=${local-mirror}/alpine/v3.23/main
-initrd ${local-mirror}%s
+set local-alpine-base ${local-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
+kernel ${local-alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${local-mirror}/alpine/v3.23/main modloop=${local-alpine-base}/modloop-lts
+initrd ${local-alpine-base}/initramfs-lts
 boot || goto failed
+
+:show_info
+echo
+echo PXE boot information
+echo buildarch: ${buildarch}
+echo debian_arch: ${debian_arch}
+echo alpine_arch: ${alpine_arch}
+echo platform: ${platform}
+echo mac: ${net0/mac}
+echo ip: ${net0/ip}
+echo next-server: ${next-server}
+echo proxydhcp next-server: ${proxydhcp/next-server}
+echo filename: ${filename}
+echo proxydhcp filename: ${proxydhcp/filename}
+echo public mirror: ${public-mirror}
+echo local mirror: ${local-mirror}
+sleep 8
+goto main_menu
 
 :shell
 shell
-goto exit
+goto main_menu
 
 :failed
 echo Boot failed. Check network, files and boot parameters.
@@ -90,6 +139,7 @@ sleep 5
 shell
 
 :exit
-exit
-`, base, debianKernelPath, debianInitrdPath, alpineKernelPath, alpineInitrdPath, debianKernelPath, debianInitrdPath, alpineKernelPath, alpineInitrdPath)
+iseq ${platform} efi && exit ||
+sanboot --no-describe --drive 0x80 || exit
+`, base)
 }
