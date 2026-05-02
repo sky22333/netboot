@@ -30,9 +30,15 @@ jobs:
           wget https://github.com/ipxe/ipxe/archive/v2.0.0.tar.gz -O ipxe.tar.gz
           tar -xzf ipxe.tar.gz
 
-      - name: 开启 HTTPS 支持
+        # https://github.com/ipxe/ipxe/blob/master/src/config/general.h
+      - name: 开启高级功能
         run: |
-          sed -i 's/#undef.*DOWNLOAD_PROTO_HTTPS/#define DOWNLOAD_PROTO_HTTPS/g' ipxe-2.0.0/src/config/general.h
+          # 开启 HTTPS 支持
+          sed -i 's/#undef DOWNLOAD_PROTO_HTTPS/#define DOWNLOAD_PROTO_HTTPS/g' ipxe-2.0.0/src/config/general.h
+          # 开启 Ping 命令
+          sed -i 's|//#define PING_CMD|#define PING_CMD|g' ipxe-2.0.0/src/config/general.h
+          # 开启 NFS 协议支持
+          sed -i 's|//#define DOWNLOAD_PROTO_NFS|#define DOWNLOAD_PROTO_NFS|g' ipxe-2.0.0/src/config/general.h
 
         # 使用仓库根目录的embed.ipxe，如果是子目录则在前面添加目录
       - name: 注入内置脚本
