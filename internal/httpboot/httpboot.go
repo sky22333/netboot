@@ -114,6 +114,7 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 		if !settings.HTTPBoot.RangeRequests {
 			w.Header().Set("Accept-Ranges", "none")
 			r.Header.Del("Range")
+			w = noRangeResponseWriter{ResponseWriter: w}
 		}
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		http.ServeContent(rec, r, info.Name(), info.ModTime(), f)
@@ -144,6 +145,15 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+type noRangeResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w noRangeResponseWriter) WriteHeader(code int) {
+	w.Header().Set("Accept-Ranges", "none")
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func serveDirectory(w http.ResponseWriter, r *http.Request, dir, requestPath string) {

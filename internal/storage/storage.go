@@ -14,6 +14,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const maxDHCPPoolSize = 65536
+
 type Store struct {
 	db      *sql.DB
 	dataDir string
@@ -330,6 +332,9 @@ func ValidateSettings(settings ServiceSettings) error {
 		}
 		if binaryBig(start) > binaryBig(end) {
 			return fmt.Errorf("dhcp.pool_end 必须大于或等于 pool_start")
+		}
+		if binaryBig(end)-binaryBig(start)+1 > maxDHCPPoolSize {
+			return fmt.Errorf("dhcp 地址池不能超过 %d 个 IP", maxDHCPPoolSize)
 		}
 		if net.ParseIP(settings.DHCP.SubnetMask).To4() == nil {
 			return fmt.Errorf("dhcp.subnet_mask 无效")

@@ -111,6 +111,98 @@ func TestCompleteDHCPUEFIDirectBootWhenNativeMenuDisabled(t *testing.T) {
 	}
 }
 
+func TestCompleteDHCPLeaseOfferThenAckKeepsSameIP(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.DHCP.Mode = "dhcp"
+	settings.DHCP.PoolStart = "192.168.1.200"
+	settings.DHCP.PoolEnd = "192.168.1.201"
+	settings.DHCP.Router = "192.168.1.1"
+	settings.DHCP.DNS = []string{"192.168.1.1"}
+	pool := newLeasePool(settings)
+
+	discover := testPXEPacket(1, testOpt(60, []byte("PXEClient")), testOpt(93, []byte{0, 0}))
+	offer := buildResponse(ctx, settings, store, observability.NewHub(), discover, false, pool)
+	if got := responseMessageType(offer); got != 2 {
+		t.Fatalf("expected offer, got message type %d", got)
+	}
+	offeredIP := net.IP(offer[16:20]).String()
+	if offeredIP != "192.168.1.200" {
+		t.Fatalf("unexpected offered IP %s", offeredIP)
+	}
+
+	request := testPXEPacket(3, testOpt(60, []byte("PXEClient")), testOpt(93, []byte{0, 0}), testOpt(50, net.ParseIP(offeredIP).To4()))
+	ack := buildResponse(ctx, settings, store, observability.NewHub(), request, false, pool)
+	if got := responseMessageType(ack); got != 5 {
+		t.Fatalf("expected ack, got message type %d", got)
+	}
+	if got := net.IP(ack[16:20]).String(); got != offeredIP {
+		t.Fatalf("expected ack to keep IP %s, got %s", offeredIP, got)
+	}
+}
+
+func TestCompleteDHCPNonPXEClientGetsNetworkOnlyConfig(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.DHCP.Mode = "dhcp"
+	settings.DHCP.PoolStart = "192.168.1.210"
+	settings.DHCP.PoolEnd = "192.168.1.210"
+	settings.DHCP.Router = "192.168.1.1"
+	settings.DHCP.DNS = []string{"192.168.1.1"}
+
+	req := testPXEPacket(1)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false, newLeasePool(settings))
+	opts := parseOptions(resp[240:])
+	if len(opts[67]) != 0 || len(opts[60]) != 0 {
+		t.Fatalf("expected network-only response without PXE options, got option60=%q option67=%q", opts[60], opts[67])
+	}
+	if got := net.IP(resp[16:20]).String(); got != "192.168.1.210" {
+		t.Fatalf("expected assigned IP, got %s", got)
+	}
+}
+
+func TestCompleteDHCPNonPXEIgnoreReturnsNoResponse(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.DHCP.Mode = "dhcp"
+	settings.DHCP.NonPXEAction = "ignore"
+	settings.DHCP.PoolStart = "192.168.1.210"
+	settings.DHCP.PoolEnd = "192.168.1.210"
+
+	resp := buildResponse(ctx, settings, store, observability.NewHub(), testPXEPacket(1), false, newLeasePool(settings))
+	if len(resp) != 0 {
+		t.Fatalf("expected no response for ignored non-PXE client, got %d bytes", len(resp))
+	}
+}
+
+func TestCompleteDHCPRequestForOtherServerIsIgnored(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.DHCP.Mode = "dhcp"
+
+	req := testPXEPacket(3, testOpt(54, net.ParseIP("192.168.1.99").To4()), testOpt(50, net.ParseIP("192.168.1.20").To4()))
+	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false, newLeasePool(settings))
+	if len(resp) != 0 {
+		t.Fatalf("expected request for another DHCP server to be ignored, got %d bytes", len(resp))
+	}
+}
+
+func TestIPXEHTTPFeatureUsesDynamicMenuURL(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.HTTPBoot.Addr = ":8080"
+	req := testPXEPacket(1,
+		testOpt(60, []byte("PXEClient")),
+		testOpt(77, []byte("iPXE")),
+		testOpt(175, []byte{0x13, 0x01, 0x01, 0xff}),
+	)
+
+	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, true, nil)
+	if got := string(parseOptions(resp[240:])[67]); got != "http://192.168.1.10:8080/dynamic.ipxe?bootfile=ipxemenu\x00" {
+		t.Fatalf("unexpected iPXE boot target %q", got)
+	}
+}
+
 func TestExecutableBootFileUsesArchitectureSpecificNetbootFiles(t *testing.T) {
 	ctx := context.Background()
 	_, settings := testStoreAndSettings(t, ctx)

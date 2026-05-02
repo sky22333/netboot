@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -85,7 +86,7 @@ func validBootPath(v string) bool {
 		u, err := url.Parse(v)
 		return err == nil && u.Host != ""
 	}
-	clean := filepath.Clean(strings.ReplaceAll(v, "\\", "/"))
+	clean := path.Clean(strings.ReplaceAll(v, "\\", "/"))
 	return clean != "." && !strings.HasPrefix(clean, "../") && clean != ".." && !strings.Contains(clean, "\x00")
 }
 
