@@ -72,7 +72,7 @@ jobs:
           retention-days: 3
 
       - name: 自动发布到 GitHub Releases
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         if: ${{ inputs.tag_name != '' }}
         with:
           tag_name: ${{ inputs.tag_name }}
