@@ -29,8 +29,6 @@ func TestLocalVarsScriptFallsBackToNextServerWithPort(t *testing.T) {
 func TestLocalVarsScriptIncludesCompatibilityGuards(t *testing.T) {
 	script := LocalVarsScript("192.168.137.1", ":80")
 	for _, want := range []string{
-		"set lang en",
-		"isset ${pxe_lang} && set lang ${pxe_lang} ||",
 		"isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||",
 		"iseq ${buildarch} arm64 && set debian_arch arm64 ||",
 		"cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386",

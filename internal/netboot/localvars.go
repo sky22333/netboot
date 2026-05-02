@@ -37,10 +37,8 @@ func LocalVarsScript(advertiseIP, httpAddr string) string {
 	return fmt.Sprintf(`#!ipxe
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 60000
-set public-mirror https://mirrors.tuna.tsinghua.edu.cn
+set public-mirror https://mirrors.cernet.edu.cn
 set local-mirror %s
-set lang en
-isset ${pxe_lang} && set lang ${pxe_lang} ||
 isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||
 isset ${buildarch} && set arch ${buildarch} || set arch unknown
 iseq ${buildarch} x86_64 && set debian_arch amd64 ||
@@ -53,29 +51,12 @@ iseq ${debian_arch} arm64 && set alpine_arch aarch64 ||
 isset ${alpine_arch} || set alpine_arch x86_64
 
 :main_menu
-iseq ${lang} cn && goto menu_cn || goto menu_en
-
-:menu_en
 menu PXE Install Menu
 item --gap -- OS Installation
 item public_debian Public Install Debian 12
 item public_alpine Public Install Alpine Linux
 item local_debian Local Install Debian 12
 item local_alpine Local Install Alpine Linux
-item --gap -- Tools
-item show_info Show Boot Information
-item shell iPXE Shell
-item exit Continue netboot.xyz
-choose --timeout ${menu-timeout} --default public_debian selected || goto exit
-goto ${selected}
-
-:menu_cn
-menu PXE Boot Menu
-item --gap -- OS Installation
-item public_debian Debian 12 Install
-item public_alpine Alpine Linux Install
-item local_debian Local Debian 12 Install
-item local_alpine Local Alpine Linux Install
 item --gap -- Tools
 item show_info Show Boot Information
 item shell iPXE Shell

@@ -2,8 +2,6 @@
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 60000
 set public-mirror https://mirrors.cernet.edu.cn
-set lang en
-isset ${pxe_lang} && set lang ${pxe_lang} ||
 isset ${buildarch} && set arch ${buildarch} || set arch unknown
 iseq ${buildarch} x86_64 && set debian_arch amd64 ||
 iseq ${buildarch} i386 && set debian_arch i386 ||
@@ -16,25 +14,10 @@ isset ${alpine_arch} || set alpine_arch x86_64
 iseq ${platform} efi && set boot_mode EFI || set boot_mode BIOS
 
 :main_menu
-iseq ${lang} cn && goto menu_cn || goto menu_en
-
-:menu_en
 menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${boot_mode}
 item --gap -- OS Installation
 item public_debian Debian 12 (Bookworm) Stable Install
 item public_alpine Alpine Linux v3.23 Lightweight Install
-item --gap -- Tools
-item show_info Show Boot Information
-item shell iPXE Shell
-item exit Exit and Boot Local Disk
-choose --timeout ${menu-timeout} --default public_debian selected || goto exit
-goto ${selected}
-
-:menu_cn
-menu Embedded iPXE Boot Menu
-item --gap -- OS Installation
-item public_debian Debian 12 Install
-item public_alpine Alpine Linux Install
 item --gap -- Tools
 item show_info Show Boot Information
 item shell iPXE Shell
