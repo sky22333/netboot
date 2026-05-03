@@ -86,4 +86,3 @@ jobs:
             undionly.kpxe
             ipxe-x86_64.efi
             ipxe-arm64.efi
-          generate_release_notes: true
