@@ -40,15 +40,8 @@ set menu-timeout 60000
 set public-mirror https://mirrors.cernet.edu.cn
 set local-mirror %s
 isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||
-isset ${buildarch} && set arch ${buildarch} || set arch unknown
-iseq ${buildarch} x86_64 && set debian_arch amd64 ||
-iseq ${buildarch} i386 && set debian_arch i386 ||
-iseq ${buildarch} arm64 && set debian_arch arm64 ||
-isset ${debian_arch} || cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386
-iseq ${debian_arch} amd64 && set alpine_arch x86_64 ||
-iseq ${debian_arch} i386 && set alpine_arch x86 ||
-iseq ${debian_arch} arm64 && set alpine_arch aarch64 ||
-isset ${alpine_arch} || set alpine_arch x86_64
+cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
+iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 
 :main_menu
 menu PXE Install Menu
@@ -60,7 +53,7 @@ item local_alpine Local Install Alpine Linux
 item --gap -- Tools
 item show_info Show Boot Information
 item shell iPXE Shell
-item exit Continue netboot.xyz
+item exit Load netboot.xyz Menu
 choose --timeout ${menu-timeout} --default public_debian selected || goto exit
 goto ${selected}
 
@@ -95,7 +88,6 @@ boot || goto failed
 :show_info
 echo
 echo PXE boot information
-echo buildarch: ${buildarch}
 echo debian_arch: ${debian_arch}
 echo alpine_arch: ${alpine_arch}
 echo platform: ${platform}
@@ -120,7 +112,6 @@ sleep 5
 shell
 
 :exit
-iseq ${platform} efi && exit ||
-sanboot --no-describe --drive 0x80 || exit
+chain --autofree https://boot.netboot.xyz
 `, base)
 }
