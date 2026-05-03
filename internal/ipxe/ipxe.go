@@ -45,6 +45,8 @@ func (g Generator) Generate(ctx context.Context, req Request) string {
 		return `<?xml version="1.0" encoding="utf-8"?><unattend xmlns="urn:schemas-microsoft-com:unattend"></unattend>`
 	case "whoami":
 		return g.whoamiMenu(ctx, httpURI)
+	case "show_info":
+		return showInfoScript(httpURI)
 	default:
 		if !validBootPath(bootfile) {
 			return fmt.Sprintf("#!ipxe\necho Invalid boot path: %s\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n", sanitizeIPXE(bootfile), httpURI)
@@ -107,7 +109,7 @@ func (g Generator) configMenu(ctx context.Context, httpURI string) string {
 		}
 	}
 	if !menu.Enabled {
-		return "#!ipxe\necho iPXE menu disabled\nsanboot --no-describe --drive 0x80\n"
+		return "#!ipxe\necho iPXE menu disabled\n" + localBootScript()
 	}
 	var b strings.Builder
 	b.WriteString("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\n")
@@ -129,19 +131,21 @@ func (g Generator) configMenu(ctx context.Context, httpURI string) string {
 	}
 	if len(actions) == 0 {
 		b.WriteString("item local Boot Local Disk\n")
-		actions = append(actions, menuAction{name: "local", script: "sanboot --no-describe --drive 0x80"})
+		actions = append(actions, menuAction{name: "local", script: localBootScript()})
 	}
+	b.WriteString("item show_info Show Boot Information\n")
+	actions = append(actions, menuAction{name: "show_info", script: fmt.Sprintf("chain %s/dynamic.ipxe?bootfile=show_info", httpURI)})
 	b.WriteString("choose --timeout ${menu-timeout} selected || goto local\ngoto ${selected}\n\n")
 	for _, action := range actions {
 		fmt.Fprintf(&b, ":%s\n%s || goto failed\ngoto end\n\n", action.name, action.script)
 	}
-	b.WriteString(":local\nsanboot --no-describe --drive 0x80 || goto failed\n\n:failed\necho Boot failed. Check boot file, HTTP Boot address and network.\nsleep 5\nshell\n:end\nexit\n")
+	fmt.Fprintf(&b, ":local\n%s\n\n:failed\necho Boot failed. Check boot file, HTTP Boot address and network.\nsleep 5\nshell\n:end\nexit\n", localBootScript())
 	return b.String()
 }
 
 func actionFor(bootFile, httpURI string) string {
 	if strings.TrimSpace(bootFile) == "" {
-		return "sanboot --no-describe --drive 0x80"
+		return localBootScript()
 	}
 	if strings.Contains(bootFile, "%dynamicboot%") {
 		value := bootFile
@@ -170,6 +174,30 @@ func (g Generator) chainScript(bootfile, httpURI string) string {
 
 func directChainScript(target, httpURI string) string {
 	return fmt.Sprintf("#!ipxe\nisset ${net0/ip} || dhcp || goto failed\nimgfree\nchain %s || goto failed\ngoto end\n:failed\necho iPXE script failed. Check URL and script content.\nsleep 5\nchain %s/dynamic.ipxe?bootfile=ipxemenu\n:end\nexit\n", target, httpURI)
+}
+
+func showInfoScript(httpURI string) string {
+	return fmt.Sprintf(`#!ipxe
+echo
+echo iPXE boot information
+echo buildarch: ${buildarch}
+echo platform: ${platform}
+echo mac: ${net0/mac}
+echo ip: ${net0/ip}
+echo gateway: ${net0/gateway}
+echo dns: ${dns}
+echo next-server: ${next-server}
+echo proxydhcp next-server: ${proxydhcp/next-server}
+echo filename: ${filename}
+echo proxydhcp filename: ${proxydhcp/filename}
+echo bootserver: %s
+sleep 8
+chain %s/dynamic.ipxe?bootfile=ipxemenu
+`, httpURI, httpURI)
+}
+
+func localBootScript() string {
+	return "iseq ${platform} efi && exit || sanboot --no-describe --drive 0x80"
 }
 
 func escapePath(path string) string {

@@ -21,7 +21,9 @@ func TestConfigMenuChainsDynamicBootItem(t *testing.T) {
 		"set bootserver http://192.168.1.10:8080",
 		"chain http://192.168.1.10:8080/dynamic.ipxe?bootfile=boot.ipxe",
 		"chain https://boot.netboot.xyz",
-		"sanboot --no-describe --drive 0x80",
+		"item show_info Show Boot Information",
+		"chain http://192.168.1.10:8080/dynamic.ipxe?bootfile=show_info",
+		"iseq ${platform} efi && exit || sanboot --no-describe --drive 0x80",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected generated menu to contain %q, got:\n%s", want, script)
@@ -58,8 +60,26 @@ func TestDisabledIPXEMenuFallsBackToLocalDisk(t *testing.T) {
 	}
 
 	script := Generator{Settings: settings, Store: store}.Generate(ctx, Request{Params: url.Values{"bootfile": {"ipxemenu"}}})
-	if !strings.Contains(script, "iPXE menu disabled") || !strings.Contains(script, "sanboot --no-describe --drive 0x80") {
+	if !strings.Contains(script, "iPXE menu disabled") || !strings.Contains(script, "iseq ${platform} efi && exit || sanboot --no-describe --drive 0x80") {
 		t.Fatalf("expected disabled menu local boot fallback, got:\n%s", script)
+	}
+}
+
+func TestGenerateShowInfoScriptReturnsToMenu(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.HTTPBoot.Addr = ":8080"
+
+	script := Generator{Settings: settings, Store: store}.Generate(ctx, Request{Params: url.Values{"bootfile": {"show_info"}}})
+	for _, want := range []string{
+		"echo iPXE boot information",
+		"echo proxydhcp next-server: ${proxydhcp/next-server}",
+		"echo bootserver: http://192.168.1.10:8080",
+		"chain http://192.168.1.10:8080/dynamic.ipxe?bootfile=ipxemenu",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected show_info script to contain %q, got:\n%s", want, script)
+		}
 	}
 }
 
