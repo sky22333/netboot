@@ -2,19 +2,11 @@
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 600000
 set public-mirror https://mirrors.cernet.edu.cn
-isset ${buildarch} && set arch ${buildarch} || set arch unknown
-iseq ${buildarch} x86_64 && set debian_arch amd64 ||
-iseq ${buildarch} i386 && set debian_arch i386 ||
-iseq ${buildarch} arm64 && set debian_arch arm64 ||
-isset ${debian_arch} || cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386
-iseq ${debian_arch} amd64 && set alpine_arch x86_64 ||
-iseq ${debian_arch} i386 && set alpine_arch x86 ||
-iseq ${debian_arch} arm64 && set alpine_arch aarch64 ||
-isset ${alpine_arch} || set alpine_arch x86_64
-iseq ${platform} efi && set boot_mode EFI || set boot_mode BIOS
+cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
+iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 
 :main_menu
-menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${boot_mode}
+menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${platform}
 item --gap -- OS Installation
 item public_debian Debian 12 (Bookworm) Stable Install
 item public_alpine Alpine Linux v3.23 Lightweight Install
@@ -27,7 +19,7 @@ goto ${selected}
 
 :public_debian
 echo Starting Debian 12 installer...
-echo arch=${debian_arch} mode=${boot_mode}
+echo arch=${debian_arch} mode=${platform}
 imgfree
 set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
 kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp
@@ -36,7 +28,7 @@ boot || goto failed
 
 :public_alpine
 echo Starting Alpine Linux installer...
-echo arch=${alpine_arch} mode=${boot_mode}
+echo arch=${alpine_arch} mode=${platform}
 imgfree
 set alpine-base ${public-mirror}/alpine/v3.23/releases/${alpine_arch}/netboot
 kernel ${alpine-base}/vmlinuz-lts initrd=initramfs-lts ip=dhcp alpine_repo=${public-mirror}/alpine/v3.23/main modloop=${alpine-base}/modloop-lts
@@ -46,11 +38,9 @@ boot || goto failed
 :show_info
 echo
 echo Embedded iPXE boot information
-echo buildarch: ${buildarch}
 echo debian_arch: ${debian_arch}
 echo alpine_arch: ${alpine_arch}
 echo platform: ${platform}
-echo boot mode: ${boot_mode}
 echo mac: ${net0/mac}
 echo ip: ${net0/ip}
 echo next-server: ${next-server}
