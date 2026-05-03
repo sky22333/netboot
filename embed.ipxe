@@ -1,6 +1,6 @@
 #!ipxe
 isset ${net0/ip} || dhcp || goto failed
-set menu-timeout 60000
+set menu-timeout 600000
 set public-mirror https://mirrors.cernet.edu.cn
 isset ${buildarch} && set arch ${buildarch} || set arch unknown
 iseq ${buildarch} x86_64 && set debian_arch amd64 ||
@@ -22,7 +22,7 @@ item --gap -- Tools
 item show_info Show Boot Information
 item shell iPXE Shell
 item exit Exit and Boot Local Disk
-choose --timeout ${menu-timeout} --default public_debian selected || goto exit
+choose --timeout ${menu-timeout} --default public_alpine selected || goto exit
 goto ${selected}
 
 :public_debian
