@@ -23,14 +23,13 @@ echo Starting Debian 12 installer...
 echo arch=${debian_arch} mode=${platform}
 imgfree
 set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
-# 传递内核参数实现半自动化安装
+# 传递内核参数实现半自动化安装，language=zh_CN是安装界面语言，如果无法正常显示则需要改为en
 kernel ${debian-base}/linux \
     initrd=initrd.gz \
     ip=dhcp \
     mirror/http/mirror=${public-mirror}/debian \
     auto=true \
     priority=critical \
-    # 安装界面使用中文语言，如果无法正常显示则需要改为en
     language=zh_CN \
     country=CN \
     locale=zh_CN.UTF-8 \
