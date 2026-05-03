@@ -22,7 +22,7 @@ echo Starting Debian 12 installer...
 echo arch=${debian_arch} mode=${platform}
 imgfree
 set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
-kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp
+kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp mirror/http/mirror=${public-mirror}/debian
 initrd ${debian-base}/initrd.gz
 boot || goto failed
 
