@@ -30,14 +30,23 @@ func TestLocalVarsScriptIncludesCompatibilityGuards(t *testing.T) {
 	script := LocalVarsScript("192.168.137.1", ":80")
 	for _, want := range []string{
 		"isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||",
-		"iseq ${buildarch} arm64 && set debian_arch arm64 ||",
-		"cpuid --ext 29 && set debian_arch amd64 || set debian_arch i386",
+		"cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64",
+		"iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64",
 		"item show_info Show Boot Information",
-		"echo proxydhcp next-server: ${proxydhcp/next-server}",
-		"iseq ${platform} efi && exit ||",
+		"echo debian_arch: ${debian_arch}",
+		"echo alpine_arch: ${alpine_arch}",
+		"item exit Load netboot.xyz Menu",
+		"chain --autofree https://boot.netboot.xyz",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected generated script to contain %q, got:\n%s", want, script)
 		}
+	}
+}
+
+func TestLocalVarsScriptDoesNotContainBuildarch(t *testing.T) {
+	script := LocalVarsScript("192.168.137.1", ":80")
+	if strings.Contains(script, "buildarch") {
+		t.Fatalf("expected generated script to NOT contain buildarch, got:\n%s", script)
 	}
 }
