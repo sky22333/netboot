@@ -2,7 +2,7 @@
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 600000
 # 国内镜像站地址
-set public-mirror https://mirrors.cernet.edu.cn
+set public-mirror https://mirrors.tuna.tsinghua.edu.cn
 cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
 iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 
