@@ -39,5 +39,5 @@ export type ServiceConfig = {
   }
   netboot_xyz: { enabled: boolean; download_dir: string; base_url: string; files: string[] }
   torrent: { enabled: boolean; addr: string }
-  security: { admin_auth_enabled: boolean; allow_remote_admin: boolean }
+  security: { admin_auth_enabled: boolean }
 }

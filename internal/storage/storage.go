@@ -95,7 +95,7 @@ func (s *Store) DefaultSettings() ServiceSettings {
 		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi"},
 		NetbootXYZ: NetbootXYZSettings{Enabled: true, DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
 		Torrent:    TorrentSettings{Enabled: false, Addr: ":6969"},
-		Security:   SecuritySettings{AdminAuthEnabled: true, AllowRemoteAdmin: false},
+		Security:   SecuritySettings{AdminAuthEnabled: true},
 	}
 }
 

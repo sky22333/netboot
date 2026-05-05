@@ -75,7 +75,6 @@ type NetbootXYZSettings struct {
 
 type SecuritySettings struct {
 	AdminAuthEnabled bool `json:"admin_auth_enabled"`
-	AllowRemoteAdmin bool `json:"allow_remote_admin"`
 }
 
 type TorrentSettings struct {

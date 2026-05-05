@@ -30,7 +30,7 @@ func RunProxyDiscover(ctx context.Context, settings storage.ServiceSettings, sto
 }
 
 func RunDHCP(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) {
-	run(ctx, settings, store, events, "67", false, newLeasePool(settings))
+	run(ctx, settings, store, events, "67", false, newLeasePool(settings, clientReservedIPs(ctx, store)...))
 }
 
 type leasePool struct {
@@ -47,8 +47,14 @@ type lease struct {
 	Expires time.Time
 }
 
-func newLeasePool(settings storage.ServiceSettings) *leasePool {
+func newLeasePool(settings storage.ServiceSettings, reservedIPs ...string) *leasePool {
 	p := &leasePool{offered: map[string]lease{}, leased: map[string]lease{}, used: map[string]string{}, ttl: time.Duration(settings.DHCP.LeaseTimeSeconds) * time.Second}
+	reserved := map[string]bool{}
+	for _, ip := range reservedIPs {
+		if parsed := net.ParseIP(ip).To4(); parsed != nil {
+			reserved[parsed.String()] = true
+		}
+	}
 	start := net.ParseIP(settings.DHCP.PoolStart).To4()
 	end := net.ParseIP(settings.DHCP.PoolEnd).To4()
 	if start == nil || end == nil {
@@ -59,7 +65,10 @@ func newLeasePool(settings storage.ServiceSettings) *leasePool {
 	for i := s; i <= e; i++ {
 		buf := make([]byte, 4)
 		binary.BigEndian.PutUint32(buf, i)
-		p.available = append(p.available, net.IP(buf))
+		ip := net.IP(buf)
+		if !reserved[ip.String()] {
+			p.available = append(p.available, ip)
+		}
 		if i == ^uint32(0) {
 			break
 		}
@@ -68,6 +77,20 @@ func newLeasePool(settings storage.ServiceSettings) *leasePool {
 		p.ttl = 24 * time.Hour
 	}
 	return p
+}
+
+func clientReservedIPs(ctx context.Context, store *storage.Store) []string {
+	clients, err := store.ListClients(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(clients))
+	for _, client := range clients {
+		if client.IP != "" {
+			out = append(out, client.IP)
+		}
+	}
+	return out
 }
 
 func (p *leasePool) Assign(mac, requested string) string {

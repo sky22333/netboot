@@ -141,6 +141,25 @@ func TestCompleteDHCPLeaseOfferThenAckKeepsSameIP(t *testing.T) {
 	}
 }
 
+func TestCompleteDHCPLeasePoolSkipsReservedClientIPs(t *testing.T) {
+	ctx := context.Background()
+	store, settings := testStoreAndSettings(t, ctx)
+	settings.DHCP.Mode = "dhcp"
+	settings.DHCP.PoolStart = "192.168.1.200"
+	settings.DHCP.PoolEnd = "192.168.1.201"
+	settings.DHCP.Router = "192.168.1.1"
+	settings.DHCP.DNS = []string{"192.168.1.1"}
+	if _, err := store.UpsertClient(ctx, storage.Client{Name: "Static PC", IP: "192.168.1.200"}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := testPXEPacket(1, testOpt(60, []byte("PXEClient")), testOpt(93, []byte{0, 0}))
+	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false, newLeasePool(settings, clientReservedIPs(ctx, store)...))
+	if got := net.IP(resp[16:20]).String(); got != "192.168.1.201" {
+		t.Fatalf("expected pool to skip reserved IP, got %s", got)
+	}
+}
+
 func TestCompleteDHCPNonPXEClientGetsNetworkOnlyConfig(t *testing.T) {
 	ctx := context.Background()
 	store, settings := testStoreAndSettings(t, ctx)
