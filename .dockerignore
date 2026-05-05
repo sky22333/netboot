@@ -1,0 +1,15 @@
+.git
+.github
+.gocache
+.gomodcache
+data
+dist
+tmp
+tmp-smoke
+release
+web/node_modules
+web/dist
+internal/web/dist
+docs
+README.md
+test.ipxe
