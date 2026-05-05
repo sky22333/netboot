@@ -1,5 +1,8 @@
 <template>
-  <div v-if="authMode !== 'ready'" class="flex min-h-screen items-center justify-center bg-neutral-50 p-4">
+  <div v-if="authMode === 'loading'" class="flex min-h-screen items-center justify-center bg-neutral-50 p-4">
+    <div class="text-sm text-neutral-500">正在连接管理后台...</div>
+  </div>
+  <div v-else-if="authMode !== 'ready'" class="flex min-h-screen items-center justify-center bg-neutral-50 p-4">
     <div class="card w-full max-w-md p-6">
       <div class="mb-6">
         <div class="text-2xl font-semibold">pxe</div>
