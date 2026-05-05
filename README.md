@@ -35,17 +35,16 @@ win系统直接双击打开，linux系统需要使用`./pxe`命令行启动。
 
 启动成功后，会自动打开默认浏览器访问管理面板，终端环境没有浏览器的场景则不会打开。
 
-### docker
+### Docker
 ```
 docker run -d \
   --name netboot \
   --restart unless-stopped \
   --network host \
-  --cap-add NET_RAW \
   -v $(pwd)/data:/data \
   ghcr.io/sky22333/netboot
 ```
-
+默认web端口：8088
 
 ### 详细文档见 [docs](docs/使用文档.md)
 
