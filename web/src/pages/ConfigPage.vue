@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="space-y-4">
     <section class="card p-5">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -30,7 +30,7 @@
       <section class="card p-5">
         <h2 class="font-semibold">DHCP</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.dhcp.enabled" type="checkbox" /> 启用 DHCP/ProxyDHCP</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="config.dhcp.enabled" class="switch" type="checkbox" /> 启用 DHCP/ProxyDHCP</label>
           <div class="grid gap-2 sm:grid-cols-2">
             <div>
               <label class="label">模式</label>
@@ -61,7 +61,7 @@
               <input v-model.trim="config.dhcp.router" class="input w-full" placeholder="网关" />
               <input v-model="dnsText" class="input w-full" placeholder="DNS，多个用逗号分隔" />
             </div>
-            <label class="flex items-center gap-2 text-sm"><input v-model="config.dhcp.detect_conflicts" type="checkbox" /> 启动完整 DHCP 前探测冲突</label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="config.dhcp.detect_conflicts" class="switch" type="checkbox" /> 启动完整 DHCP 前探测冲突</label>
           </template>
         </div>
       </section>
@@ -69,7 +69,7 @@
       <section class="card p-5">
         <h2 class="font-semibold">TFTP</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.tftp.enabled" type="checkbox" /> 启用 TFTP</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="config.tftp.enabled" class="switch" type="checkbox" /> 启用 TFTP</label>
           <input v-model.trim="config.tftp.root" class="input w-full" placeholder="TFTP 根目录" />
           <div class="grid gap-2 sm:grid-cols-3">
             <input v-model.number="config.tftp.max_transfers" class="input w-full" type="number" min="1" placeholder="最大并发" />
@@ -80,21 +80,21 @@
             <input v-model.number="config.tftp.retry_count" class="input w-full" type="number" min="1" placeholder="重试次数" />
             <input v-model.number="config.tftp.max_upload_bytes" class="input w-full" type="number" min="0" placeholder="上传限制字节" />
           </div>
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.tftp.allow_upload" type="checkbox" /> 允许 TFTP 上传</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="config.tftp.allow_upload" class="switch" type="checkbox" /> 允许 TFTP 上传</label>
         </div>
       </section>
 
       <section class="card p-5">
         <h2 class="font-semibold">HTTP Boot</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.httpboot.enabled" type="checkbox" /> 启用 HTTP Boot</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="config.httpboot.enabled" class="switch" type="checkbox" /> 启用 HTTP Boot</label>
           <div class="grid gap-2 sm:grid-cols-2">
             <input v-model.trim="config.httpboot.addr" class="input w-full" placeholder=":80" />
             <input v-model.trim="config.httpboot.root" class="input w-full" placeholder="HTTP Boot 根目录" />
           </div>
           <div class="grid gap-2 sm:grid-cols-2">
-            <label class="flex items-center gap-2 text-sm"><input v-model="config.httpboot.directory_listing" type="checkbox" /> 允许目录浏览</label>
-            <label class="flex items-center gap-2 text-sm"><input v-model="config.httpboot.range_requests" type="checkbox" /> 允许 Range 断点请求</label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="config.httpboot.directory_listing" class="switch" type="checkbox" /> 允许目录浏览</label>
+            <label class="flex items-center gap-2 text-sm"><input v-model="config.httpboot.range_requests" class="switch" type="checkbox" /> 允许 Range 断点请求</label>
           </div>
         </div>
       </section>
@@ -120,7 +120,7 @@
       <section class="card p-5">
         <h2 class="font-semibold">SMB 共享</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.smb.enabled" type="checkbox" /> 启用 SMB 共享</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="config.smb.enabled" class="switch" type="checkbox" /> 启用 SMB 共享</label>
           <div class="grid gap-2 sm:grid-cols-2">
             <input v-model.trim="config.smb.share_name" class="input w-full" placeholder="共享名，例如 pxe" />
             <select v-model="config.smb.permissions" class="input w-full">
@@ -136,7 +136,7 @@
       <section class="card p-5">
         <h2 class="font-semibold">BitTorrent Tracker</h2>
         <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.torrent.enabled" type="checkbox" /> 启用内置 Tracker</label>
+          <label class="flex items-center gap-2 text-sm"><input v-model="config.torrent.enabled" class="switch" type="checkbox" /> 启用内置 Tracker</label>
           <input v-model.trim="config.torrent.addr" class="input w-full" placeholder=":6969" />
         </div>
       </section>

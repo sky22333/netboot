@@ -24,6 +24,42 @@ body {
   @apply h-10 rounded-md border border-neutral-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-neutral-900/10;
 }
 
+select.input {
+  @apply cursor-pointer appearance-none pr-9;
+  background-image: linear-gradient(45deg, transparent 50%, #525252 50%), linear-gradient(135deg, #525252 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.switch {
+  @apply relative inline-block shrink-0 cursor-pointer appearance-none rounded-full border border-neutral-300 bg-neutral-200 align-middle transition disabled:cursor-not-allowed disabled:opacity-50;
+  width: 2.25rem;
+  height: 1.25rem;
+}
+
+.switch::after {
+  content: "";
+  @apply absolute rounded-full bg-white shadow-sm transition;
+  width: 1rem;
+  height: 1rem;
+  left: 0.125rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.switch:checked {
+  @apply border-neutral-950 bg-neutral-950;
+}
+
+.switch:checked::after {
+  transform: translate(1rem, -50%);
+}
+
+.switch:focus-visible {
+  @apply outline-none ring-2 ring-neutral-900/15;
+}
+
 .label {
   @apply text-sm font-medium text-neutral-700;
 }

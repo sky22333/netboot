@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="space-y-4">
     <section class="card p-5">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -34,7 +34,7 @@
           </div>
           <p class="mt-1 text-sm text-neutral-500">{{ menuHint(menu.menu_type) }}</p>
         </div>
-        <label class="flex items-center gap-2 text-sm"><input v-model="menu.enabled" type="checkbox" /> 启用</label>
+        <label class="flex items-center gap-2 text-sm"><input v-model="menu.enabled" class="switch" type="checkbox" /> 启用</label>
       </div>
 
       <div class="grid gap-3 p-5 md:grid-cols-[minmax(0,1fr)_10rem_12rem]">
@@ -46,7 +46,7 @@
           <label class="label">等待秒数</label>
           <input v-model.number="menu.timeout_seconds" class="input mt-1 w-full" type="number" min="0" max="255" />
         </div>
-        <label class="mt-7 flex items-center gap-2 text-sm"><input v-model="menu.randomize_timeout" type="checkbox" /> 随机等待时间</label>
+        <label class="mt-7 flex items-center gap-2 text-sm"><input v-model="menu.randomize_timeout" class="switch" type="checkbox" /> 随机等待时间</label>
       </div>
 
       <div class="px-5 pb-5">
@@ -70,7 +70,7 @@
             <input v-model.trim="item.pxe_type" class="input" placeholder="8005" />
             <input v-model.trim="item.server_ip" class="input" placeholder="%tftpserver%" />
             <div class="flex flex-nowrap items-center justify-end gap-2">
-              <label class="flex shrink-0 items-center gap-1 text-sm"><input v-model="item.enabled" type="checkbox" /> 启用</label>
+              <label class="flex shrink-0 items-center gap-1 text-sm"><input v-model="item.enabled" class="switch" type="checkbox" /> 启用</label>
               <button class="btn h-9 shrink-0 px-2" :disabled="index === 0" @click="moveItem(menu, index, -1)">上移</button>
               <button class="btn btn-danger h-9 shrink-0 px-2" @click="removeItem(menu, index)">删除</button>
             </div>

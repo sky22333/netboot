@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="space-y-4">
     <section class="card p-5">
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -27,7 +27,7 @@
             <input v-model.trim="action.command" class="input" placeholder="命令，例如 ping" />
             <input v-model="action.args" class="input" placeholder="参数，例如 -n 1 %IP%" />
             <div class="flex flex-wrap justify-end gap-2">
-              <label class="flex items-center gap-2 text-sm"><input v-model="action.enabled" type="checkbox" /> 启用</label>
+              <label class="flex items-center gap-2 text-sm"><input v-model="action.enabled" class="switch" type="checkbox" /> 启用</label>
               <button class="btn h-9 px-2" :disabled="executingId === action.id || !action.id || selectedClientIds.length === 0 || !action.enabled" :title="!action.id ? '保存后才能执行' : ''" @click="execute(action)">
                 {{ executingId === action.id ? '执行中' : '执行' }}
               </button>
