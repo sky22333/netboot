@@ -45,7 +45,7 @@ kernel ${debian-base}/linux \
     country=CN \
     locale=zh_CN.UTF-8 \
     keymap=us \
-    hostname=${net0/ip} \
+    hostname=debian \
     domain= \
     passwd/root-login=false \
     passwd/make-user=true \
