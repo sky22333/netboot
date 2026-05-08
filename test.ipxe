@@ -51,7 +51,10 @@ kernel ${debian-base}/linux \
     passwd/make-user=true \
     partman-auto/method=regular \
     partman-auto/choose_recipe=atomic \
-    tasksel/tasks=standard \
+    tasksel/first=standard \
+    pkgsel/run_tasksel=false \
+    pkgsel/include=openssh-server,curl,wget,vim,sudo \
+    pkgsel/upgrade=none \
     popularity-contest/participate=false \
     openssh-server/password-auth=true
 initrd ${debian-base}/initrd.gz
