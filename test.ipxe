@@ -1,8 +1,13 @@
 #!ipxe
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 600000
+
 # 国内镜像站地址
 set public-mirror https://mirrors.tuna.tsinghua.edu.cn
+set debian-mirror-host mirrors.tuna.tsinghua.edu.cn
+set debian-mirror-dir /debian
+set debian-security-path /debian-security
+
 cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
 iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 
@@ -27,7 +32,13 @@ set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_a
 kernel ${debian-base}/linux \
     initrd=initrd.gz \
     ip=dhcp \
-    mirror/http/mirror=${public-mirror}/debian \
+    mirror/country=manual \
+    mirror/http/hostname=${debian-mirror-host} \
+    mirror/http/directory=${debian-mirror-dir} \
+    mirror/http/proxy= \
+    apt-setup/services-select=security \
+    apt-setup/security_host=${debian-mirror-host} \
+    apt-setup/security_path=${debian-security-path} \
     auto=true \
     priority=critical \
     language=zh_CN \
