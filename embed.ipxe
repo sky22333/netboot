@@ -2,13 +2,20 @@
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 600000
 set public-mirror https://mirrors.cernet.edu.cn
+
+# Debian mirror configuration
+set debian-mirror-host mirrors.cernet.edu.cn
+set debian-mirror-dir /debian
+set debian-security-path /debian-security
+set debian-release trixie
+
 cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
 iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 
 :main_menu
 menu Embedded iPXE Boot Menu - Arch:${debian_arch} Mode:${platform}
 item --gap -- OS Installation
-item public_debian Debian 12 (Bookworm) Stable Install
+item public_debian Debian 13 (Trixie) Stable Install
 item public_alpine Alpine Linux v3.23 Lightweight Install
 item --gap -- Tools
 item show_info Show Boot Information
@@ -18,11 +25,40 @@ choose --timeout ${menu-timeout} --default public_alpine selected || goto exit
 goto ${selected}
 
 :public_debian
-echo Starting Debian 12 installer...
+echo Starting Debian 13 installer...
 echo arch=${debian_arch} mode=${platform}
 imgfree
-set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
-kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp mirror/http/mirror=${public-mirror}/debian
+
+set debian-base ${public-mirror}/debian/dists/${debian-release}/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+
+kernel ${debian-base}/linux \
+    initrd=initrd.gz \
+    ip=dhcp \
+    auto=true \
+    priority=critical \
+    mirror/country=manual \
+    mirror/http/hostname=${debian-mirror-host} \
+    mirror/http/directory=${debian-mirror-dir} \
+    mirror/http/proxy= \
+    apt-setup/services-select=security \
+    apt-setup/security_host=${debian-mirror-host} \
+    apt-setup/security_path=${debian-security-path} \
+    language=zh_CN \
+    country=CN \
+    locale=zh_CN.UTF-8 \
+    keymap=us \
+    hostname=debian \
+    domain= \
+    passwd/root-login=false \
+    passwd/make-user=true \
+    partman-auto/method=regular \
+    partman-auto/choose_recipe=atomic \
+    pkgsel/run_tasksel=false \
+    pkgsel/include=openssh-server,curl,wget,vim,sudo \
+    pkgsel/upgrade=none \
+    popularity-contest/participate=false \
+    openssh-server/password-auth=true
+
 initrd ${debian-base}/initrd.gz
 boot || goto failed
 
@@ -48,6 +84,7 @@ echo proxydhcp next-server: ${proxydhcp/next-server}
 echo filename: ${filename}
 echo proxydhcp filename: ${proxydhcp/filename}
 echo mirror: ${public-mirror}
+echo release: ${debian-release}
 sleep 8
 goto main_menu
 
