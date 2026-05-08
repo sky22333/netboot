@@ -15,40 +15,55 @@ func EnsureLocalVars(tftpRoot, advertiseIP, httpAddr string, events *observabili
 	if err := os.MkdirAll(tftpRoot, 0755); err != nil {
 		return "", false, err
 	}
+
 	target := filepath.Join(tftpRoot, LocalVarsFile)
+
 	if info, err := os.Stat(target); err == nil && !info.IsDir() {
 		if events != nil {
 			events.Publish("info", "netboot.xyz", "local-vars.ipxe 已存在，跳过生成")
 		}
 		return target, false, nil
 	}
+
 	script := LocalVarsScript(advertiseIP, httpAddr)
+
 	if err := os.WriteFile(target, []byte(script), 0644); err != nil {
 		return "", false, err
 	}
+
 	if events != nil {
 		events.Publish("info", "netboot.xyz", "已生成 local-vars.ipxe: "+target)
 	}
+
 	return target, true, nil
 }
 
 func LocalVarsScript(advertiseIP, httpAddr string) string {
 	base := booturl.HTTPBase(advertiseIP, httpAddr)
+
 	return fmt.Sprintf(`#!ipxe
 isset ${net0/ip} || dhcp || goto failed
 set menu-timeout 60000
+
 set public-mirror https://mirrors.cernet.edu.cn
 set local-mirror %s
+
+set debian-mirror-host mirrors.cernet.edu.cn
+set debian-mirror-dir /debian
+set debian-security-path /debian-security
+set debian-release trixie
+
 isset ${proxydhcp/next-server} && set use_proxydhcp_settings true ||
+
 cpuid --ext 29 && set debian_arch amd64 || set debian_arch arm64
 iseq ${debian_arch} amd64 && set alpine_arch x86_64 || set alpine_arch aarch64
 
 :main_menu
 menu PXE Install Menu
 item --gap -- OS Installation
-item public_debian Public Install Debian 12
+item public_debian Public Install Debian 13
 item public_alpine Public Install Alpine Linux
-item local_debian Local Install Debian 12
+item local_debian Local Install Debian 13
 item local_alpine Local Install Alpine Linux
 item --gap -- Tools
 item show_info Show Boot Information
@@ -59,8 +74,37 @@ goto ${selected}
 
 :public_debian
 imgfree
-set debian-base ${public-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
-kernel ${debian-base}/linux initrd=initrd.gz ip=dhcp
+
+set debian-base ${public-mirror}/debian/dists/${debian-release}/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+
+kernel ${debian-base}/linux \
+	initrd=initrd.gz \
+	ip=dhcp \
+	auto=true \
+	priority=critical \
+	mirror/country=manual \
+	mirror/http/hostname=${debian-mirror-host} \
+	mirror/http/directory=${debian-mirror-dir} \
+	mirror/http/proxy= \
+	apt-setup/services-select=security \
+	apt-setup/security_host=${debian-mirror-host} \
+	apt-setup/security_path=${debian-security-path} \
+	language=zh_CN \
+	country=CN \
+	locale=zh_CN.UTF-8 \
+	keymap=us \
+	hostname=debian \
+	domain= \
+	passwd/root-login=false \
+	passwd/make-user=true \
+	partman-auto/method=regular \
+	partman-auto/choose_recipe=atomic \
+	pkgsel/run_tasksel=false \
+	pkgsel/include=openssh-server,curl,wget,vim,sudo \
+	pkgsel/upgrade=none \
+	popularity-contest/participate=false \
+	openssh-server/password-auth=true
+
 initrd ${debian-base}/initrd.gz
 boot || goto failed
 
@@ -73,8 +117,37 @@ boot || goto failed
 
 :local_debian
 imgfree
-set local-debian-base ${local-mirror}/debian/dists/bookworm/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
-kernel ${local-debian-base}/linux initrd=initrd.gz ip=dhcp
+
+set local-debian-base ${local-mirror}/debian/dists/${debian-release}/main/installer-${debian_arch}/current/images/netboot/debian-installer/${debian_arch}
+
+kernel ${local-debian-base}/linux \
+	initrd=initrd.gz \
+	ip=dhcp \
+	auto=true \
+	priority=critical \
+	mirror/country=manual \
+	mirror/http/hostname=${debian-mirror-host} \
+	mirror/http/directory=${debian-mirror-dir} \
+	mirror/http/proxy= \
+	apt-setup/services-select=security \
+	apt-setup/security_host=${debian-mirror-host} \
+	apt-setup/security_path=${debian-security-path} \
+	language=zh_CN \
+	country=CN \
+	locale=zh_CN.UTF-8 \
+	keymap=us \
+	hostname=debian \
+	domain= \
+	passwd/root-login=false \
+	passwd/make-user=true \
+	partman-auto/method=regular \
+	partman-auto/choose_recipe=atomic \
+	pkgsel/run_tasksel=false \
+	pkgsel/include=openssh-server,curl,wget,vim,sudo \
+	pkgsel/upgrade=none \
+	popularity-contest/participate=false \
+	openssh-server/password-auth=true
+
 initrd ${local-debian-base}/initrd.gz
 boot || goto failed
 
@@ -99,6 +172,7 @@ echo filename: ${filename}
 echo proxydhcp filename: ${proxydhcp/filename}
 echo public mirror: ${public-mirror}
 echo local mirror: ${local-mirror}
+echo release: ${debian-release}
 sleep 8
 goto main_menu
 
