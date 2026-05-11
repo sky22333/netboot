@@ -16,11 +16,11 @@
 * 💾 **轻量级存储**：底层使用纯 Go SQLite（默认 `data/pxe.db`），零外部数据库依赖。
 * 🧩 **iPXE 固件构建**：提供独立 GitHub Actions，可用仓库根目录 `embed.ipxe` 构建 Legacy BIOS、UEFI x86_64 和 UEFI ARM64 固件。
 
-## 运行
+### windows运行
 
 [Releases](https://github.com/sky22333/netboot/releases)页面下载构建好的二进制文件
 
-win系统直接双击打开，linux系统需要使用`./pxe`命令行启动。
+下载后解压，双击打开即可运行。
 
 可以不带参数直接启动，默认数据会自动生成在当前路径的data目录。
 
@@ -33,7 +33,19 @@ win系统直接双击打开，linux系统需要使用`./pxe`命令行启动。
 --no-browser 禁止自动打开浏览器
 ```
 
-启动成功后，会自动打开默认浏览器访问管理面板，终端环境没有浏览器的场景则不会打开。
+启动成功后，会自动打开默认浏览器访问管理面板，如果没有浏览器的场景则不会打开。
+
+### Linux运行
+一键脚本
+```
+curl -fsSL https://raw.githubusercontent.com/sky22333/netboot/main/install.sh | sudo sh
+```
+
+默认路径：
+- 程序：`/usr/local/bin/pxe`
+- 数据：`/opt/netboot/data`
+- 固件：`/opt/netboot`
+- 服务：`netboot`
 
 ### Docker
 ```
