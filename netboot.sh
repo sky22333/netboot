@@ -329,16 +329,19 @@ do_update() {
 
 do_uninstall() {
     need_root
-    printf '%s' "是否同时删除数据目录 $DATA_DIR？输入 yes 确认："
+    printf '%s' "是否同时删除数据目录 $DATA_DIR？输入 y 确认："
     read confirm || confirm=""
     remove_service
     rm -f "$BIN_PATH"
-    if [ "$confirm" = "yes" ]; then
-        rm -rf "$APP_DIR"
-        ok "程序和数据已卸载"
-    else
-        ok "程序已卸载，数据已保留：$DATA_DIR"
-    fi
+    case "$confirm" in
+        y|Y)
+            rm -rf "$APP_DIR"
+            ok "程序和数据已卸载"
+            ;;
+        *)
+            ok "程序已卸载，数据已保留：$DATA_DIR"
+            ;;
+    esac
 }
 
 print_menu() {
