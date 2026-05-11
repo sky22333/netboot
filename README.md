@@ -44,8 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/sky22333/netboot/main/install.sh | 
 默认路径：
 - 程序：`/usr/local/bin/pxe`
 - 数据：`/opt/netboot/data`
-- 固件：`/opt/netboot`
-- 服务：`netboot`
+- IPXE固件：`/opt/netboot`
+- 服务名称：`netboot`
 
 ### Docker
 ```
