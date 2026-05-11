@@ -38,7 +38,9 @@
 ### Linux运行
 一键脚本
 ```
-curl -fsSL https://raw.githubusercontent.com/sky22333/netboot/main/install.sh | sudo sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/sky22333/netboot/main/install.sh
+chmod +x install.sh
+./install.sh
 ```
 
 默认路径：
