@@ -148,7 +148,7 @@ Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 ExecStart=$BIN_PATH --data-dir $DATA_DIR --host $ADMIN_HOST --port $ADMIN_PORT --no-browser
-Restart=on-failure
+Restart=always
 RestartSec=5
 LimitNOFILE=1048576
 
