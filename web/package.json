@@ -11,18 +11,18 @@
     "test": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@vitejs/plugin-vue": "^6.0.6",
+    "@vitejs/plugin-vue": "^6.0.7",
     "lucide-vue-next": "^1.0.0",
     "pinia": "^3.0.4",
-    "vite": "^8.0.10",
-    "vue": "^3.5.33",
-    "vue-router": "^5.0.6"
+    "vite": "^8.0.16",
+    "vue": "^3.5.35",
+    "vue-router": "^5.1.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.4",
+    "@tailwindcss/vite": "^4.3.0",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
-    "vue-tsc": "^3.2.7"
+    "vue-tsc": "^3.3.3"
   }
 }
 
