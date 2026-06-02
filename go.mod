@@ -4,9 +4,10 @@ go 1.25.0
 
 require (
 	github.com/gin-gonic/gin v1.12.0
-	github.com/pelletier/go-toml/v2 v2.3.0
-	golang.org/x/crypto v0.50.0
-	modernc.org/sqlite v1.50.0
+	github.com/pelletier/go-toml/v2 v2.3.1
+	golang.org/x/crypto v0.52.0
+	golang.org/x/text v0.37.0
+	modernc.org/sqlite v1.51.0
 )
 
 require (
@@ -37,11 +38,10 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.6.0 // indirect
 	golang.org/x/arch v0.26.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	modernc.org/libc v1.72.1 // indirect
+	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
