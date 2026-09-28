@@ -52,22 +52,6 @@ func TestFileHandlerDisablesRangeRequests(t *testing.T) {
 	}
 }
 
-func TestFileHandlerServesNetbootFile(t *testing.T) {
-	ctx := context.Background()
-	store, settings := testStoreAndSettings(t, ctx)
-	if err := os.WriteFile(filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi"), []byte("efi"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "http://pxe.local/netboot/netboot.xyz.efi", nil)
-	req.RemoteAddr = "192.168.1.50:12345"
-	rec := httptest.NewRecorder()
-	fileHandler(settings, store, observability.NewHub()).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "efi") {
-		t.Fatalf("expected netboot file response, status=%d body=%q", rec.Code, rec.Body.String())
-	}
-}
-
 func TestHTTPFileSentMessageIncludesTransferDetails(t *testing.T) {
 	msg := httpFileSentMessage("win10.iso", http.MethodGet, http.StatusPartialContent, "bytes=0-1023", 1024, 5044211712, 150*time.Millisecond, "10.43.180.161")
 	for _, want := range []string{
@@ -96,11 +80,7 @@ func testStoreAndSettings(t *testing.T, ctx context.Context) (*storage.Store, st
 	t.Cleanup(func() { _ = store.Close() })
 	settings := store.DefaultSettings()
 	settings.HTTPBoot.Root = filepath.Join(dir, "http")
-	settings.NetbootXYZ.DownloadDir = filepath.Join(dir, "netboot")
 	if err := os.MkdirAll(settings.HTTPBoot.Root, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(settings.NetbootXYZ.DownloadDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	return store, settings
@@ -110,8 +90,7 @@ func testSettings(t *testing.T) storage.ServiceSettings {
 	t.Helper()
 	dir := t.TempDir()
 	return storage.ServiceSettings{
-		HTTPBoot:   storage.HTTPBootSettings{Root: filepath.Join(dir, "http")},
-		NetbootXYZ: storage.NetbootXYZSettings{DownloadDir: filepath.Join(dir, "netboot")},
+		HTTPBoot: storage.HTTPBootSettings{Root: filepath.Join(dir, "http")},
 	}
 }
 

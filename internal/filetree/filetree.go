@@ -29,13 +29,3 @@ func Path(name string) (string, error) {
 	}
 	return filepath.Clean(name), nil
 }
-
-func Resolve(root, downloadDir, name string) (string, string, error) {
-	name = strings.TrimLeft(strings.ReplaceAll(name, "\\", "/"), "/")
-	if rel, ok := strings.CutPrefix(name, "netboot/"); ok {
-		root = downloadDir
-		name = rel
-	}
-	rel, err := Path(name)
-	return root, rel, err
-}

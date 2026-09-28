@@ -89,14 +89,14 @@
                   <div
                     class="break-all font-mono text-xs font-medium sm:text-sm"
                   >
-                    {{ file.boot_path }}
+                    {{ file.name }}
                   </div>
                   <div class="mt-2 flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      :aria-label="`复制 ${file.boot_path}`"
-                      @click="copyPath(file.boot_path)"
+                      :aria-label="`复制 ${file.name}`"
+                      @click="copyPath(file.name)"
                       ><Copy
                     /></Button>
                     <Badge variant="outline">{{ file.architecture }}</Badge
@@ -114,7 +114,7 @@
                 </TableCell>
                 <TableCell class="hidden px-5 py-4 sm:table-cell">
                   <Badge :variant="file.exists ? 'secondary' : 'outline'">{{
-                    file.exists ? "本地已有" : "未下载"
+                    file.exists ? "已下载" : "未下载"
                   }}</Badge>
                   <p
                     v-if="file.exists"
@@ -202,7 +202,6 @@ import { usePageRefresh } from "@/lib/pageRefresh";
 type FirmwareFile = {
   name: string;
   architecture: string;
-  boot_path: string;
   exists: boolean;
   size: number;
   modified?: string;

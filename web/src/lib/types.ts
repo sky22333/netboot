@@ -42,5 +42,5 @@ export type ServiceConfig = {
     uefi_arm32: string;
     uefi_arm64: string;
   };
-  netboot_xyz: { download_dir: string; base_url: string; files: string[] };
+  netboot_xyz: { base_url: string; files: string[] };
 };

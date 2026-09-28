@@ -127,7 +127,6 @@ func (c BootConfig) EnsureRuntime() error {
 		filepath.Join(c.Data.Dir, "logs"),
 		filepath.Join(c.Data.Dir, "boot", "tftp"),
 		filepath.Join(c.Data.Dir, "boot", "http"),
-		filepath.Join(c.Data.Dir, "boot", "netboot"),
 		filepath.Join(c.Data.Dir, "smb"),
 		filepath.Join(c.Data.Dir, "exports"),
 	}

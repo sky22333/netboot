@@ -488,7 +488,7 @@ import {
 import { api, upload } from "../lib/api";
 import type { ServiceConfig } from "../lib/types";
 
-type RootKey = "http" | "tftp" | "netboot";
+type RootKey = "http" | "tftp";
 
 type FileEntry = {
   name: string;
@@ -521,14 +521,6 @@ const roots = [
     icon: HardDrive,
     description:
       "放 undionly.kpxe、ipxe-x86_64.efi、ipxe-arm64.efi 等第一阶段或 TFTP 引导文件。",
-  },
-  {
-    key: "netboot" as RootKey,
-    label: "netboot.xyz",
-    localPath: "data/boot/netboot",
-    icon: FileText,
-    description:
-      "存放 netboot.xyz 官方固件；到服务配置中填写 netboot/文件名后使用。",
   },
 ];
 
@@ -591,8 +583,7 @@ const selectedAccessPath = computed(() =>
 );
 const accessExample = computed(() => {
   if (root.value === "http") return `${httpBase()}/boot.ipxe`;
-  if (root.value === "tftp") return "undionly.kpxe";
-  return `${httpBase()}/netboot/netboot.xyz.kpxe`;
+  return "undionly.kpxe";
 });
 const dialogTitle = computed(() => {
   if (dialog.value === "mkdir") return "新建目录";
@@ -881,7 +872,6 @@ async function copyText(text: string) {
 function accessPath(path: string) {
   const clean = path.replace(/^\.?\//, "");
   if (root.value === "http") return `${httpBase()}/${clean}`;
-  if (root.value === "netboot") return `${httpBase()}/netboot/${clean}`;
   return clean;
 }
 

@@ -776,8 +776,6 @@ func fileRoot(settings storage.ServiceSettings, rootType string) (*os.Root, erro
 		dir = settings.HTTPBoot.Root
 	case "tftp":
 		dir = settings.TFTP.Root
-	case "netboot":
-		dir = settings.NetbootXYZ.DownloadDir
 	default:
 		return nil, os.ErrInvalid
 	}

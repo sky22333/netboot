@@ -131,7 +131,7 @@ func (a *App) StartServices(ctx context.Context) (err error) {
 			a.Events.Publish("error", "services", err.Error())
 		}
 	}()
-	for _, dir := range []string{settings.HTTPBoot.Root, settings.TFTP.Root, settings.NetbootXYZ.DownloadDir} {
+	for _, dir := range []string{settings.HTTPBoot.Root, settings.TFTP.Root} {
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}

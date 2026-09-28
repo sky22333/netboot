@@ -65,9 +65,8 @@ type BootFilesSettings struct {
 }
 
 type NetbootXYZSettings struct {
-	DownloadDir string   `json:"download_dir"`
-	BaseURL     string   `json:"base_url"`
-	Files       []string `json:"files"`
+	BaseURL string   `json:"base_url"`
+	Files   []string `json:"files"`
 }
 
 type Client struct {

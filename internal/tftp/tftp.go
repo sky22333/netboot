@@ -113,13 +113,13 @@ func parseRequestOptions(parts []string) map[string]string {
 }
 
 func sendFile(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, name string, client net.Addr, options map[string]string) {
-	root, path, err := filetree.Resolve(settings.TFTP.Root, settings.NetbootXYZ.DownloadDir, name)
+	path, err := filetree.Path(name)
 	if err != nil {
 		events.Publish("error", "tftp", "请求路径非法: "+name+" -> "+client.String()+" error="+err.Error())
 		sendErrorCode(client, errAccessViolation, "非法路径")
 		return
 	}
-	tree, err := os.OpenRoot(root)
+	tree, err := os.OpenRoot(settings.TFTP.Root)
 	if err != nil {
 		sendErrorCode(client, errAccessViolation, "根目录不可读")
 		return
@@ -193,13 +193,12 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 }
 
 func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, name string, client net.Addr, options map[string]string) {
-	root, _ := filepath.Abs(settings.TFTP.Root)
 	path, err := filetree.Path(name)
 	if err != nil {
 		sendErrorCode(client, errAccessViolation, "非法路径")
 		return
 	}
-	tree, err := os.OpenRoot(root)
+	tree, err := os.OpenRoot(settings.TFTP.Root)
 	if err != nil {
 		sendErrorCode(client, errAccessViolation, "根目录不可写")
 		return

@@ -175,11 +175,23 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "刷新", exact: true }),
   ).toHaveAttribute("data-variant", "ghost");
+  const uploadedFirmware = await page.request.post(
+    base + "/api/v1/files/upload?root=tftp&path=ipxe-arm64.efi",
+    {
+      headers: { "Content-Type": "application/octet-stream" },
+      data: Buffer.from("test firmware"),
+    },
+  );
+  expect(uploadedFirmware.ok()).toBe(true);
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(
+    page.getByRole("tabpanel").getByText("已下载", { exact: true }),
+  ).toBeVisible();
   await page.screenshot({ path: "../tmp/ui-firmware.png", fullPage: true });
   await page.getByRole("tab", { name: "netboot.xyz", exact: true }).click();
   await expect(page.getByRole("tabpanel").getByRole("row")).toHaveCount(5);
   await expect(
-    page.getByText("netboot/netboot.xyz.efi", { exact: true }),
+    page.getByText("netboot.xyz.efi", { exact: true }),
   ).toBeVisible();
   await page.route("**/api/v1/firmware/download", async (route) => {
     expect(route.request().postDataJSON()).toEqual({

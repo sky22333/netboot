@@ -21,7 +21,6 @@ func TestLatestDownloadsAndPartialFailure(t *testing.T) {
 	dir := t.TempDir()
 	settings := storage.ServiceSettings{}
 	settings.TFTP.Root = dir
-	settings.NetbootXYZ.DownloadDir = filepath.Join(dir, "netboot")
 	names := []string{"ipxe-x86_64.efi", "ipxe-arm64.efi", "undionly.kpxe"}
 	source, err := Select(settings, "project", names)
 	if err != nil {
@@ -68,7 +67,7 @@ func TestLatestDownloadsAndPartialFailure(t *testing.T) {
 		}
 	}
 	catalog, err := Catalog(settings)
-	if err != nil || len(catalog) != 2 || !catalog[0].Files[0].Exists || catalog[0].Files[0].BootPath != names[0] {
+	if err != nil || len(catalog) != 2 || !catalog[0].Files[0].Exists || catalog[0].Files[0].Name != names[0] {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
 }
@@ -130,5 +129,33 @@ func TestSelectionRejectsUnlistedFiles(t *testing.T) {
 		if _, err := Select(storage.ServiceSettings{}, tc.id, tc.names); err == nil {
 			t.Fatalf("accepted %+v", tc)
 		}
+	}
+}
+
+func TestNetbootDownloadsToTFTPRoot(t *testing.T) {
+	settings := storage.ServiceSettings{}
+	settings.TFTP.Root = t.TempDir()
+	settings.NetbootXYZ.Files = []string{"netboot.xyz.efi"}
+	source, err := Select(settings, "netboot", settings.NetbootXYZ.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://boot.netboot.xyz/ipxe/netboot.xyz.efi" {
+			t.Fatalf("unexpected URL %s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("firmware")), ContentLength: 8, Request: r}, nil
+	})}
+	results, err := Download(context.Background(), client, source, "https://boot.netboot.xyz/ipxe", observability.NewHub())
+	if err != nil || len(results) != 1 || !results[0].OK {
+		t.Fatalf("%+v %v", results, err)
+	}
+	catalog, err := Catalog(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := catalog[1].Files[0]
+	if catalog[1].Directory != settings.TFTP.Root || file.Name != "netboot.xyz.efi" || !file.Exists {
+		t.Fatalf("unexpected catalog %+v", catalog)
 	}
 }

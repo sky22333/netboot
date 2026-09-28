@@ -184,10 +184,10 @@ func TestIPXEUsesBootScript(t *testing.T) {
 func TestDownloadedFilesDoNotOverrideConfiguredFirmware(t *testing.T) {
 	ctx := context.Background()
 	_, settings := testStoreAndSettings(t, ctx)
-	settings.NetbootXYZ.DownloadDir = t.TempDir()
-	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi"))
-	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz-arm64.efi"))
-	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.kpxe"))
+	settings.TFTP.Root = t.TempDir()
+	mustWriteFile(t, filepath.Join(settings.TFTP.Root, "netboot.xyz.efi"))
+	mustWriteFile(t, filepath.Join(settings.TFTP.Root, "netboot.xyz-arm64.efi"))
+	mustWriteFile(t, filepath.Join(settings.TFTP.Root, "netboot.xyz.kpxe"))
 
 	cases := map[string]string{
 		"bios":       settings.BootFiles.BIOS,
@@ -206,8 +206,8 @@ func TestDownloadedFilesDoNotOverrideConfiguredFirmware(t *testing.T) {
 func TestARM64DoesNotReuseX64NetbootEFI(t *testing.T) {
 	ctx := context.Background()
 	_, settings := testStoreAndSettings(t, ctx)
-	settings.NetbootXYZ.DownloadDir = t.TempDir()
-	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi"))
+	settings.TFTP.Root = t.TempDir()
+	mustWriteFile(t, filepath.Join(settings.TFTP.Root, "netboot.xyz.efi"))
 
 	if got := executableBootFile(settings, "uefi_arm64"); got != settings.BootFiles.UEFIARM64 {
 		t.Fatalf("expected ARM64 to fall back to ARM64 boot file, got %q", got)

@@ -97,7 +97,7 @@ func (s *Store) DefaultSettings() ServiceSettings {
 		HTTPBoot:   HTTPBootSettings{Enabled: true, Addr: ":80", Root: filepath.Join(s.dataDir, "boot", "http"), DirectoryListing: true, RangeRequests: true},
 		SMB:        SMBSettings{Enabled: false, Root: filepath.Join(s.dataDir, "smb"), ShareName: "pxe", Permissions: "read"},
 		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi"},
-		NetbootXYZ: NetbootXYZSettings{DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
+		NetbootXYZ: NetbootXYZSettings{BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
 	}
 }
 
@@ -201,9 +201,6 @@ func ValidateSettings(settings ServiceSettings) error {
 		if file != "" && (!filepath.IsLocal(file) || len(file) > 127 || strings.ContainsAny(file, "\r\n\x00:")) {
 			return fmt.Errorf("启动文件必须是长度不超过 127 字节的相对路径")
 		}
-	}
-	if settings.NetbootXYZ.DownloadDir == "" {
-		return fmt.Errorf("netboot_xyz.download_dir 不能为空")
 	}
 	source, e := url.Parse(settings.NetbootXYZ.BaseURL)
 	if e != nil || source.Host == "" || (source.Scheme != "http" && source.Scheme != "https") {

@@ -292,16 +292,16 @@ install_binary() {
 }
 
 install_firmware() {
-    mkdir -p "$APP_DIR"
+    mkdir -p "$DATA_DIR/boot/tftp"
     for fw in undionly.kpxe ipxe-x86_64.efi ipxe-arm64.efi; do
         info "下载启动固件：$fw"
-        if download_release_file "$fw" "$APP_DIR/$fw"; then
-            chmod 0644 "$APP_DIR/$fw"
+        if download_release_file "$fw" "$DATA_DIR/boot/tftp/$fw"; then
+            chmod 0644 "$DATA_DIR/boot/tftp/$fw"
         else
             warn "固件下载失败：$fw"
         fi
     done
-    ok "启动固件已保存到 $APP_DIR，请按需复制或在面板中配置使用"
+    ok "启动固件已保存到 $DATA_DIR/boot/tftp"
 }
 
 do_install() {

@@ -196,7 +196,7 @@ func TestFirmwareCatalogAndSelection(t *testing.T) {
 	}
 	token := setupAdmin(t, r)
 	w := request(r, "GET", "/api/v1/firmware", "", token)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "ipxe-arm64.efi") || !strings.Contains(w.Body.String(), "netboot/netboot.xyz.efi") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "ipxe-arm64.efi") || !strings.Contains(w.Body.String(), "netboot.xyz.efi") {
 		t.Fatalf("catalog: %d %s", w.Code, w.Body)
 	}
 	for _, body := range []string{`{"source":"project","files":["../escape"]}`, `{"source":"unknown","files":["undionly.kpxe"]}`, `{"source":"project","files":[]}`} {

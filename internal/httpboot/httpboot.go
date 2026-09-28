@@ -52,14 +52,14 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		root, target, err := filetree.Resolve(settings.HTTPBoot.Root, settings.NetbootXYZ.DownloadDir, strings.TrimPrefix(r.URL.Path, "/"))
+		target, err := filetree.Path(strings.TrimPrefix(r.URL.Path, "/"))
 		if err != nil {
 			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件路径非法: %s client=%s error=%s", r.URL.Path, clientIP(r), err.Error()))
 			http.Error(w, "非法路径", http.StatusForbidden)
 			return
 		}
 		rel := filepath.ToSlash(target)
-		tree, err := os.OpenRoot(root)
+		tree, err := os.OpenRoot(settings.HTTPBoot.Root)
 		if err != nil {
 			http.NotFound(w, r)
 			return

@@ -60,4 +60,4 @@ VueUse 使用 Reka UI 声明兼容的稳定版本 14.4.0，复用同一份运行
 
 ## 固件下载
 
-`GET /api/v1/firmware` 只读取本地状态；`POST /api/v1/firmware/download` 接受来源 `project` 或 `netboot` 与目录中允许的文件名数组 `files`。项目固件直接通过 `https://github.com/sky22333/netboot/releases/latest/download/<文件名>` 下载并跟随重定向，不请求 GitHub API。项目文件保存到 TFTP 根目录，netboot.xyz 保存到其配置的下载目录。全局单任务、逐文件流式写入，单文件上限 64 MiB；完成长度检查与磁盘同步后替换同名文件，失败或取消清理临时文件并保留原文件。不会自动修改启动配置。
+`GET /api/v1/firmware` 只读取本地状态；`POST /api/v1/firmware/download` 接受来源 `project` 或 `netboot` 与目录中允许的文件名数组 `files`。项目固件直接通过 `https://github.com/sky22333/netboot/releases/latest/download/<文件名>` 下载并跟随重定向，不请求 GitHub API。两种来源统一保存到 TFTP 根目录，启动配置直接使用文件名。HTTP Boot 仅提供 HTTP 根目录内的文件。全局单任务、逐文件流式写入，单文件上限 64 MiB；完成长度检查与磁盘同步后替换同名文件，失败或取消清理临时文件并保留原文件。不会自动修改启动配置。

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"os"
 	"path/filepath"
 	"pxe/internal/observability"
 	"testing"
@@ -24,10 +25,9 @@ func testSettings(t *testing.T) storage.ServiceSettings {
 	t.Helper()
 	dir := t.TempDir()
 	return storage.ServiceSettings{
-		Server:     storage.ServerSettings{AdvertiseIP: "192.168.1.10"},
-		TFTP:       storage.TFTPSettings{Root: filepath.Join(dir, "tftp"), BlockSizeMax: 1428},
-		HTTPBoot:   storage.HTTPBootSettings{Addr: ":8080"},
-		NetbootXYZ: storage.NetbootXYZSettings{DownloadDir: filepath.Join(dir, "netboot")},
+		Server:   storage.ServerSettings{AdvertiseIP: "192.168.1.10"},
+		TFTP:     storage.TFTPSettings{Root: filepath.Join(dir, "tftp"), BlockSizeMax: 1428},
+		HTTPBoot: storage.HTTPBootSettings{Addr: ":8080"},
 	}
 }
 
@@ -92,5 +92,46 @@ func TestTransferCancellationInterruptsAckWait(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("cancellation waited for transfer timeout")
+	}
+}
+
+func TestFirmwareServedFromTFTPRoot(t *testing.T) {
+	for _, name := range []string{"ipxe-x86_64.efi", "ipxe-arm64.efi", "undionly.kpxe", "netboot.xyz.efi"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := testSettings(t)
+			cfg.TFTP.TimeoutSeconds = 1
+			if err := os.MkdirAll(cfg.TFTP.Root, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(cfg.TFTP.Root, name), []byte("firmware"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			client, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			done := make(chan struct{})
+			go func() { defer close(done); sendFile(ctx, cfg, observability.NewHub(), name, client.LocalAddr(), nil) }()
+			client.SetReadDeadline(time.Now().Add(2 * time.Second))
+			buf := make([]byte, 1024)
+			n, remote, err := client.ReadFrom(buf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != 12 || binary.BigEndian.Uint16(buf[:2]) != opDATA || string(buf[4:n]) != "firmware" {
+				t.Fatalf("unexpected packet %x", buf[:n])
+			}
+			if _, err := client.WriteTo([]byte{0, opACK, 0, 1}, remote); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-done:
+			case <-ctx.Done():
+				t.Fatal("transfer did not finish")
+			}
+		})
 	}
 }

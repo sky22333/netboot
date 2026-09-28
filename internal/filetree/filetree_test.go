@@ -6,11 +6,7 @@ import (
 	"testing"
 )
 
-func TestMappingAndTraversal(t *testing.T) {
-	root, rel, err := Resolve("http", "netboot", "netboot/firmware.efi")
-	if err != nil || root != "netboot" || rel != "firmware.efi" {
-		t.Fatalf("mapping: %s %s %v", root, rel, err)
-	}
+func TestTraversal(t *testing.T) {
 	for _, p := range []string{"../outside", "a/../../outside", "/absolute"} {
 		if _, err := Path(p); err == nil {
 			t.Errorf("accepted %q", p)
