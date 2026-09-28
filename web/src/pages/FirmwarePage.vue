@@ -152,7 +152,17 @@
         </Card>
         <Card class="p-5">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <h2 class="text-sm font-medium">下载后如何使用</h2>
+            <div class="flex items-center gap-1">
+              <h2 class="text-sm font-medium">下载后如何使用</h2>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="启动说明"
+                title="启动说明"
+                @click="helpOpen = true"
+                ><CircleHelp
+              /></Button>
+            </div>
             <Button variant="ghost" size="sm" as-child
               ><RouterLink to="/config">服务配置<ArrowRight /></RouterLink
             ></Button>
@@ -163,6 +173,81 @@
         </Card>
       </TabsContent>
     </Tabs>
+    <Dialog v-model:open="helpOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>固件启动说明</DialogTitle>
+          <DialogDescription
+            >使用自带菜单，或按需添加启动脚本。</DialogDescription
+          >
+        </DialogHeader>
+        <Tabs default-value="usage" class="min-h-0 gap-4">
+          <TabsList class="w-full">
+            <TabsTrigger value="usage">如何启动</TabsTrigger>
+            <TabsTrigger value="scripts">可选脚本</TabsTrigger>
+          </TabsList>
+          <div class="max-h-[55dvh] overflow-y-auto">
+            <TabsContent value="usage" class="space-y-4">
+              <Card class="p-4">
+                <ol class="list-decimal space-y-3 pl-4 text-sm">
+                  <li>下载固件，文件自动保存到 TFTP目录。</li>
+                  <li>将文件名填入服务配置的对应架构。</li>
+                  <li>保存并重启服务，从客户端网络启动。</li>
+                </ol>
+              </Card>
+              <p class="text-sm text-muted-foreground">
+                项目固件进入内置菜单；netboot.xyz
+                默认使用在线菜单，通常无需额外脚本。
+              </p>
+              <p class="text-sm text-muted-foreground">
+                服务器不指定后续脚本。使用无内置菜单的通用 iPXE
+                时，需自行提供启动入口。
+              </p>
+            </TabsContent>
+            <TabsContent value="scripts" class="space-y-4">
+              <Card class="divide-y">
+                <div v-for="script in helpScripts" :key="script.name">
+                  <div class="space-y-1 px-4 py-3">
+                    <p class="break-all font-mono text-xs font-medium">
+                      {{ script.name }}
+                    </p>
+                    <p class="text-sm text-muted-foreground">
+                      {{ script.description }}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+              <p class="text-xs text-muted-foreground">
+                自动加载取决于固件和启动方式。netboot.xyz 会在本地 TFTP
+                启动时，自动探测并启动上述文件。
+              </p>
+              <p class="text-xs text-muted-foreground">
+                可选文件未找到不一定是故障，也无需额外创建空文件。
+              </p>
+            </TabsContent>
+          </div>
+        </Tabs>
+        <DialogFooter class="items-center sm:justify-between">
+          <div class="flex gap-3">
+            <Button variant="link" size="sm" class="h-auto p-0 text-xs" as-child
+              ><a
+                href="https://ipxe.org/howto/chainloading"
+                target="_blank"
+                rel="noreferrer"
+                >iPXE 文档<ExternalLink /></a
+            ></Button>
+            <Button variant="link" size="sm" class="h-auto p-0 text-xs" as-child
+              ><a
+                href="https://github.com/netbootxyz/netboot.xyz/blob/development/roles/netbootxyz/templates/disks/netboot.xyz.j2"
+                target="_blank"
+                rel="noreferrer"
+                >netboot.xyz 文档<ExternalLink /></a
+            ></Button>
+          </div>
+          <Button size="sm" @click="helpOpen = false">知道了</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
 
@@ -171,6 +256,7 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import {
   ArrowRight,
+  CircleHelp,
   Copy,
   Cpu,
   Download,
@@ -194,6 +280,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import Feedback from "@/components/Feedback.vue";
 import { api } from "@/lib/api";
 import { confirmAction } from "@/lib/confirm";
@@ -220,6 +314,19 @@ type DownloadResult = {
   error?: string;
 };
 const sources = ref<Source[]>([]);
+const helpOpen = ref(false);
+const helpScripts = [
+  {
+    name: "autoexec.ipxe",
+    description: "iPXE 自动脚本，通常与固件放在同一目录。",
+  },
+  { name: "local-vars.ipxe", description: "netboot.xyz 本地变量配置。" },
+  {
+    name: "HOSTNAME-主机名.ipxe / MAC-地址.ipxe",
+    description: "netboot.xyz 按设备定制的启动脚本。",
+  },
+  { name: "menu.ipxe", description: "netboot.xyz 本地默认菜单。" },
+];
 const activeSource = ref("project");
 const loading = ref(false);
 const busy = ref(false);

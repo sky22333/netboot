@@ -347,8 +347,7 @@
             </div>
           </div>
           <p class="text-xs text-muted-foreground">
-            填写 TFTP 目录内对应架构的固件文件名。iPXE 后续脚本使用 HTTP
-            目录下的 boot.ipxe。
+            填写 TFTP 目录内对应架构的固件文件名。
           </p>
         </div>
       </Card>

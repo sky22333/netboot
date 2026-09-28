@@ -166,6 +166,17 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   await page.getByRole("button", { name: "添加账号", exact: true }).click();
   await expect(page.getByText("tester", { exact: true })).toBeVisible();
   await visit("固件下载");
+  await page.getByRole("button", { name: "启动说明", exact: true }).click();
+  await expect(
+    page.getByRole("dialog").getByRole("heading", { name: "固件启动说明" }),
+  ).toBeVisible();
+  await page.getByRole("dialog").getByRole("tab", { name: "可选脚本" }).click();
+  await expect(
+    page.getByRole("dialog").getByText("autoexec.ipxe", { exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
   await expect(page.getByRole("tab", { name: "项目固件" })).toHaveAttribute(
     "data-state",
     "active",
@@ -271,6 +282,21 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
       await expect(
         page.getByText("ipxe-arm64.efi", { exact: true }),
       ).toBeVisible();
+      await page.getByRole("button", { name: "启动说明", exact: true }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: "../tmp/ui-firmware-help-mobile.png",
+        fullPage: true,
+      });
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "关闭", exact: true })
+        .click();
       await page.screenshot({
         path: "../tmp/ui-firmware-mobile.png",
         fullPage: true,

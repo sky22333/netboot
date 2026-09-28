@@ -15,9 +15,3 @@ func TestHTTPBaseFallsBackToNextServer(t *testing.T) {
 		t.Fatalf("HTTPBase() = %q", got)
 	}
 }
-
-func TestHTTPBaseWithListenHostPrefersConcreteHost(t *testing.T) {
-	if got := HTTPBaseWithListenHost("192.168.137.1", "10.0.0.10:8080"); got != "http://10.0.0.10:8080" {
-		t.Fatalf("HTTPBaseWithListenHost() = %q", got)
-	}
-}

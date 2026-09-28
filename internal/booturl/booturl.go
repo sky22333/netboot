@@ -18,16 +18,6 @@ func HTTPBase(advertiseIP, listenAddr string) string {
 	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
-func HTTPBaseWithListenHost(advertiseIP, listenAddr string) string {
-	listenAddr = strings.TrimSpace(listenAddr)
-	if host, port, err := net.SplitHostPort(listenAddr); err == nil {
-		if host != "" && host != "0.0.0.0" && host != "::" {
-			return "http://" + net.JoinHostPort(host, port)
-		}
-	}
-	return HTTPBase(advertiseIP, listenAddr)
-}
-
 func Port(addr, fallback string) string {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {

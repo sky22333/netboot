@@ -34,10 +34,7 @@ func TestIPXEClientSeenStatus(t *testing.T) {
 		testOpt(93, []byte{0, 7}),
 	)
 
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, true)
-	if len(resp) == 0 {
-		t.Fatal("expected response")
-	}
+	buildResponse(ctx, settings, store, observability.NewHub(), req, true)
 	clients, err := store.ListClients(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -165,22 +162,6 @@ func TestCompleteDHCPRequestForOtherServerIsIgnored(t *testing.T) {
 	}
 }
 
-func TestIPXEUsesBootScript(t *testing.T) {
-	ctx := context.Background()
-	store, settings := testStoreAndSettings(t, ctx)
-	settings.HTTPBoot.Addr = ":8080"
-	req := testPXEPacket(1,
-		testOpt(60, []byte("PXEClient")),
-		testOpt(77, []byte("iPXE")),
-		testOpt(175, []byte{0x13, 0x01, 0x01, 0xff}),
-	)
-
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, true)
-	if got := string(parseOptions(resp[240:])[67]); got != "http://192.168.1.10:8080/boot.ipxe\x00" {
-		t.Fatalf("unexpected iPXE boot target %q", got)
-	}
-}
-
 func TestDownloadedFilesDoNotOverrideConfiguredFirmware(t *testing.T) {
 	ctx := context.Background()
 	_, settings := testStoreAndSettings(t, ctx)
@@ -288,13 +269,52 @@ func TestProxyCannotOverwriteStaticBinding(t *testing.T) {
 		t.Fatalf("binding overwritten: %+v %v", got, err)
 	}
 }
-func TestIPXEWithoutHTTPDoesNotReloadFirmware(t *testing.T) {
-	ctx := context.Background()
-	store, cfg := testStoreAndSettings(t, ctx)
-	cfg.HTTPBoot.Enabled = false
-	req := testPXEPacket(1, testOpt(77, []byte("iPXE")))
-	resp := buildResponse(ctx, cfg, store, observability.NewHub(), req, true)
-	if got := parseOptions(resp[240:])[67]; len(got) != 0 {
-		t.Fatalf("firmware loop: %q", got)
+func TestIPXEOnlyReceivesNetworkConfiguration(t *testing.T) {
+	for _, httpEnabled := range []bool{false, true} {
+		for _, proxy := range []bool{false, true} {
+			for _, marker := range []testOption{testOpt(77, []byte("iPXE")), testOpt(60, []byte("iPXE")), testOpt(175, []byte{1})} {
+				ctx := context.Background()
+				store, cfg := testStoreAndSettings(t, ctx)
+				cfg.HTTPBoot.Enabled = httpEnabled
+				if !proxy {
+					cfg.DHCP.Mode = "dhcp"
+				}
+				for _, msg := range []byte{1, 3} {
+					req := testPXEPacket(msg, marker)
+					resp := buildResponse(ctx, cfg, store, observability.NewHub(), req, proxy)
+					if proxy {
+						if len(resp) != 0 {
+							t.Fatal("proxy advertised a second-stage target")
+						}
+						continue
+					}
+					if len(resp) < 240 {
+						t.Fatal("missing DHCP network configuration")
+					}
+					opts := parseOptions(resp[240:])
+					for _, code := range []byte{43, 60, 66, 67} {
+						if len(opts[code]) != 0 {
+							t.Fatalf("unexpected boot option %d", code)
+						}
+					}
+					for _, b := range resp[20:24] {
+						if b != 0 {
+							t.Fatal("unexpected next-server")
+						}
+					}
+					for _, b := range resp[108:236] {
+						if b != 0 {
+							t.Fatal("unexpected boot file")
+						}
+					}
+					if net.IP(resp[16:20]).Equal(net.IPv4zero) || len(opts[1]) != 4 || len(opts[51]) != 4 {
+						t.Fatal("missing lease or network options")
+					}
+					if opts[53][0] != map[byte]byte{1: 2, 3: 5}[msg] {
+						t.Fatal("incorrect DHCP response type")
+					}
+				}
+			}
+		}
 	}
 }

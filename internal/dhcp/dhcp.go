@@ -7,7 +7,6 @@ import (
 	"net"
 	"time"
 
-	"pxe/internal/booturl"
 	"pxe/internal/netutil"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
@@ -212,9 +211,12 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
 	if isIPXE {
-		boot := ipxeBootFile(settings)
-		events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应 iPXE 启动目标: %s", mac, boot))
-		return offerBootFile(req, settings, clientIP, boot, nil, proxy)
+		// The running firmware owns its boot flow. ProxyDHCP has no second-stage
+		// target to advertise; complete DHCP still supplies network configuration.
+		if proxy || settings.DHCP.Mode != "dhcp" {
+			return nil
+		}
+		return offerNetworkConfig(req, settings, clientIP)
 	}
 	boot := executableBootFile(settings, arch)
 	events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原始 PXE 可执行启动文件: %s", mac, boot))
@@ -238,13 +240,6 @@ func executableBootFile(settings storage.ServiceSettings, arch string) string {
 	}
 }
 
-func ipxeBootFile(settings storage.ServiceSettings) string {
-	if !settings.HTTPBoot.Enabled {
-		return ""
-	}
-	return booturl.HTTPBaseWithListenHost(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr) + "/boot.ipxe"
-}
-
 func offerBootFile(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy bool) []byte {
 	return offerResponse(req, settings, yiaddr, bootFile, opt43, proxy, true)
 }
@@ -258,7 +253,10 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	if serverIP == nil {
 		return nil
 	}
-	nextServerIP := serverIP
+	nextServerIP := net.IPv4zero.To4()
+	if includePXE {
+		nextServerIP = serverIP
+	}
 	yi := net.ParseIP(yiaddr).To4()
 	if yi == nil {
 		yi = net.IPv4zero

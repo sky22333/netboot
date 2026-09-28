@@ -509,14 +509,14 @@ type FileListResponse = {
 const roots = [
   {
     key: "http" as RootKey,
-    label: "HTTP Boot",
+    label: "HTTP目录",
     localPath: "data/boot/http",
     icon: Globe2,
     description: "存放启动脚本和系统镜像，通过 HTTP 访问。",
   },
   {
     key: "tftp" as RootKey,
-    label: "TFTP 启动",
+    label: "TFTP目录",
     localPath: "data/boot/tftp",
     icon: HardDrive,
     description:
@@ -582,7 +582,7 @@ const selectedAccessPath = computed(() =>
   selected.value ? accessPath(selectedFullPath.value) : "",
 );
 const accessExample = computed(() => {
-  if (root.value === "http") return `${httpBase()}/boot.ipxe`;
+  if (root.value === "http") return `${httpBase()}/images/system.iso`;
   return "undionly.kpxe";
 });
 const dialogTitle = computed(() => {
@@ -597,7 +597,7 @@ const dialogHint = computed(() => {
 });
 const dialogPlaceholder = computed(() => {
   if (dialog.value === "mkdir") return "目录名";
-  if (dialog.value === "file") return "例如 boot.ipxe";
+  if (dialog.value === "file") return "例如 install.ipxe";
   return "新名称或目标路径";
 });
 
