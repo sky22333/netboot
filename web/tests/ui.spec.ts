@@ -1,0 +1,217 @@
+import { test, expect } from "@playwright/test";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { resolve } from "node:path";
+import { createServer } from "node:net";
+let server: ChildProcess;
+let base: string;
+
+test.beforeAll(async () => {
+  const socket = createServer();
+  await new Promise<void>((done) => socket.listen(0, "127.0.0.1", done));
+  const port = (socket.address() as { port: number }).port;
+  await new Promise<void>((done) => socket.close(() => done()));
+  const temp = resolve("../tmp/ui-e2e");
+  await mkdir(temp, { recursive: true });
+  const data = await mkdtemp(resolve(temp, "run-"));
+  server = spawn(
+    resolve("../dist", process.platform === "win32" ? "pxe.exe" : "pxe"),
+    [
+      "--data-dir",
+      data,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--no-browser",
+    ],
+    { windowsHide: true, stdio: "ignore" },
+  );
+  base = `http://127.0.0.1:${port}`;
+  await expect
+    .poll(async () => {
+      try {
+        return (await fetch(base + "/api/v1/setup/status")).status;
+      } catch {
+        return 0;
+      }
+    })
+    .toBe(200);
+});
+test.afterAll(async () => {
+  if (server && server.exitCode === null) {
+    const closed = new Promise<void>((done) =>
+      server.once("exit", () => done()),
+    );
+    server.kill();
+    await closed;
+  }
+});
+
+test("管理后台完整操作与移动端导航", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    const NativeSource = window.EventSource;
+    (window as any).__testStreams = [];
+    window.EventSource = class extends NativeSource {
+      constructor(url: string | URL, init?: EventSourceInit) {
+        super(url, init);
+        (window as any).__testStreams.push(this);
+      }
+    };
+  });
+  await page.goto(base);
+  await page.getByLabel("用户名", { exact: true }).fill("admin");
+  await page.getByLabel("密码", { exact: true }).fill("password123");
+  await page.getByRole("button", { name: "创建账号", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "运行概览", exact: true }),
+  ).toBeVisible();
+  const visit = async (name: string) => {
+    await page.getByRole("link", { name, exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name, exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  };
+  await visit("服务配置");
+  await page.getByLabel("最大并发", { exact: true }).fill("17");
+  await page.getByRole("switch", { name: "启用 TFTP", exact: true }).click();
+  await page
+    .getByLabel("普通 DHCP 客户端", { exact: true })
+    .selectOption("ignore");
+  await page.getByRole("button", { name: "保存配置" }).click();
+  await expect(
+    page.getByText("已保存，重启服务后生效。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("[data-sonner-toaster]")).toHaveCSS(
+    "position",
+    "fixed",
+  );
+  const config = await (await page.request.get(base + "/api/v1/config")).json();
+  expect(config.data.tftp.max_transfers).toBe(17);
+  expect(config.data.tftp.enabled).toBe(false);
+  expect(config.data.dhcp.non_pxe_action).toBe("ignore");
+  await page.screenshot({ path: "../tmp/ui-config.png", fullPage: true });
+  await page.getByLabel("最大并发", { exact: true }).fill("18");
+  await page.getByRole("link", { name: "文件管理", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "取消" })
+    .click();
+  await page.getByLabel("最大并发", { exact: true }).fill("17");
+  await visit("文件管理");
+  await page.getByRole("button", { name: "新建文件", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("名称", { exact: true })
+    .fill("test.ipxe");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "确定", exact: true })
+    .click();
+  await page.getByLabel("文件内容").fill("#!ipxe\necho test");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "保存", exact: true }),
+  ).toBeDisabled();
+  await page.getByLabel("文件内容").fill("#!ipxe\necho changed");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "取消", exact: true })
+    .click();
+  await expect(page.getByLabel("文件内容")).toHaveValue("#!ipxe\necho changed");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "确认", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.locator("input[type=file]").setInputFiles({
+    name: "test.iso",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(1024 * 1024, 1),
+  });
+  await expect(
+    page.getByRole("button", { name: "test.iso", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "../tmp/ui-files.png", fullPage: true });
+  await visit("设备管理");
+  await page.getByRole("button", { name: "添加设备", exact: true }).click();
+  await page.getByLabel("名称", { exact: true }).fill("test-pc");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "test-pc", exact: true }),
+  ).toBeVisible();
+  await visit("账号管理");
+  await page.getByLabel("用户名", { exact: true }).fill("tester");
+  await page.getByLabel("密码", { exact: true }).fill("password456");
+  await page.getByRole("button", { name: "添加账号", exact: true }).click();
+  await expect(page.getByText("tester", { exact: true })).toBeVisible();
+  await visit("固件下载");
+  await visit("运行日志");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).__testStreams.filter(
+          (s: EventSource) => s.readyState !== EventSource.CLOSED,
+        ).length,
+    ),
+  ).toBe(1);
+  await visit("系统诊断");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).__testStreams.filter(
+          (s: EventSource) => s.readyState !== EventSource.CLOSED,
+        ).length,
+    ),
+  ).toBe(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "切换导航" }).click();
+  await page.getByRole("link", { name: "设备管理", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "设备管理", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({ path: "../tmp/ui-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 320, height: 800 });
+  for (const name of [
+    "服务配置",
+    "文件管理",
+    "账号管理",
+    "固件下载",
+    "运行日志",
+    "系统诊断",
+    "运行概览",
+  ]) {
+    await page.getByRole("button", { name: "切换导航" }).click();
+    await visit(name);
+  }
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(
+    page.getByRole("button", { name: "登录", exact: true }),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
+});

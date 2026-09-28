@@ -24,7 +24,7 @@
 
 TOML 仅包含 data、admin、database 三部分启动配置。服务设置保存在 SQLite settings 表。新数据库直接建立当前结构，不提供旧版本升级迁移或配置兼容逻辑。
 
-应用启动先打开数据库与管理 Web，协议服务通过仪表盘显式启动。配置改变后需重启协议服务。启停操作串行执行；所有监听创建成功才报告启动完成，任一模块失败回滚此次启动。SMB 保存运行时配置供停止使用。下载固件与选择启动文件是独立动作。
+应用启动先打开数据库与管理 Web，协议服务通过运行概览显式启动。配置改变后需重启协议服务。启停操作串行执行；所有监听创建成功才报告启动完成，任一模块失败回滚此次启动。SMB 保存运行时配置供停止使用。下载固件与选择启动文件是独立动作。
 
 普通 PXE 客户端按架构获得配置的固件；iPXE 客户端获得 HTTP /boot.ipxe。TFTP 与 HTTP 只读取实际文件，不生成动态启动脚本。固件自己的安装菜单属于固件内容，不受管理页面控制。
 
@@ -47,3 +47,13 @@ clients.ip 只存管理员静态保留地址，observed_ip 只存最近观测地
 ### Web 文件上传
 
 `POST /api/v1/files/upload?root=http&path=images/example.iso` 要求登录、`Content-Type: application/octet-stream` 和准确的 `Content-Length`，请求体直接为文件内容。旧 multipart 接口已移除。上限由启动配置 `admin.max_upload_bytes` 控制，默认 32 GiB；列表接口返回 `max_upload_bytes` 供 UI 展示。上传直接写入目标目录的保留临时文件，完成并同步后原子创建目标硬链接，不覆盖同名文件；两个并发槽位限制磁盘压力。文本编辑上限仍为 1 MiB，固件下载仍为 64 MiB。
+
+### 管理界面
+
+Vue 3.5.43 + shadcn-vue 2.8.2 生成的 Reka Nova 组件，运行时依赖 Reka UI 2.10.5、Tailwind CSS 4.3.3。组件源码位于 `web/src/components/ui`，仅保留使用的组件；CLI 不进入项目依赖。主题使用本地系统字体，状态样式采用 Tailwind 原生属性选择器，无外部字体或 CSS 请求。导航与业务布局保持稳定，页面动态导入。
+
+确认操作统一经过 `confirm.ts` 和 AlertDialog，页面刷新通过 `pageRefresh.ts` 等待实际请求；成功反馈使用 Sonner，错误保留在页面。文本编辑和配置修改离开页面前确认。日志使用有界浅响应数组及帧批处理，离开日志/概览页面断开 SSE。
+
+依赖版本与 lockfile 固定。TypeScript 7.0.2 无法被当前 vue-tsc 3.3.11 加载，使用最新兼容稳定版本 6.0.3，不修改第三方包规避不兼容。
+
+VueUse 使用 Reka UI 声明兼容的稳定版本 14.4.0，复用同一份运行时，避免同时打包两个主版本。

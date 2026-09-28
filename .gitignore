@@ -16,3 +16,6 @@ coverage.out
 *.test
 .DS_Store
 Thumbs.db
+
+web/test-results/
+web/playwright-report/

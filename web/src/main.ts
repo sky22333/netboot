@@ -1,32 +1,29 @@
-import { createApp } from 'vue'
-import { createRouter, createWebHistory } from 'vue-router'
-import App from './App.vue'
-import Dashboard from './pages/Dashboard.vue'
-import ConfigPage from './pages/ConfigPage.vue'
-import ClientsPage from './pages/ClientsPage.vue'
-import FilesPage from './pages/FilesPage.vue'
-import NetbootPage from './pages/NetbootPage.vue'
-import LogsPage from './pages/LogsPage.vue'
-import DiagnosticsPage from './pages/DiagnosticsPage.vue'
-import UsersPage from './pages/UsersPage.vue'
-import './styles/main.css'
+import { createApp } from "vue";
+import { createRouter, createWebHistory } from "vue-router";
+import App from "./App.vue";
+import { toast } from "vue-sonner";
+import "./styles/main.css";
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', component: Dashboard },
-    { path: '/config', component: ConfigPage },
-    { path: '/clients', component: ClientsPage },
-    { path: '/files', component: FilesPage },
-    { path: '/netboot', component: NetbootPage },
-    { path: '/users', component: UsersPage },
-    { path: '/logs', component: LogsPage },
-    { path: '/diagnostics', component: DiagnosticsPage }
-  ]
-})
+    { path: "/", component: () => import("./pages/Dashboard.vue") },
+    { path: "/config", component: () => import("./pages/ConfigPage.vue") },
+    { path: "/clients", component: () => import("./pages/ClientsPage.vue") },
+    { path: "/files", component: () => import("./pages/FilesPage.vue") },
+    { path: "/netboot", component: () => import("./pages/NetbootPage.vue") },
+    { path: "/users", component: () => import("./pages/UsersPage.vue") },
+    { path: "/logs", component: () => import("./pages/LogsPage.vue") },
+    {
+      path: "/diagnostics",
+      component: () => import("./pages/DiagnosticsPage.vue"),
+    },
+  ],
+});
 
-const app = createApp(App)
+const app = createApp(App);
 app.config.errorHandler = (err) => {
-  console.error('pxe ui error', err)
-}
-app.use(router).mount('#app')
+  console.error("pxe ui error", err);
+  toast.error(err instanceof Error ? err.message : "操作失败，请重试");
+};
+app.use(router).mount("#app");
