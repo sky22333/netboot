@@ -43,3 +43,7 @@ clients.ip 只存管理员静态保留地址，observed_ip 只存最近观测地
 ## 构建
 
 先运行 npm ci --prefix web 和 npm run build --prefix web，生成 internal/web/dist，随后 Go embed 将其嵌入应用。应用、Docker 和 iPXE 固件分别由独立工作流构建。
+
+### Web 文件上传
+
+`POST /api/v1/files/upload?root=http&path=images/example.iso` 要求登录、`Content-Type: application/octet-stream` 和准确的 `Content-Length`，请求体直接为文件内容。旧 multipart 接口已移除。上限由启动配置 `admin.max_upload_bytes` 控制，默认 32 GiB；列表接口返回 `max_upload_bytes` 供 UI 展示。上传直接写入目标目录的保留临时文件，完成并同步后原子创建目标硬链接，不覆盖同名文件；两个并发槽位限制磁盘压力。文本编辑上限仍为 1 MiB，固件下载仍为 64 MiB。

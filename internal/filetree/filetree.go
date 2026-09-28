@@ -8,10 +8,21 @@ import (
 	"strings"
 )
 
+const UploadTempPrefix = ".pxe-upload-"
+
+func IsUploadTemp(name string) bool {
+	return strings.HasPrefix(strings.ToLower(name), UploadTempPrefix)
+}
+
 func Path(name string) (string, error) {
 	name = strings.ReplaceAll(name, "\\", "/")
 	if name == "" {
 		name = "."
+	}
+	for _, part := range strings.Split(name, "/") {
+		if IsUploadTemp(part) {
+			return "", os.ErrPermission
+		}
 	}
 	if !filepath.IsLocal(name) {
 		return "", os.ErrPermission

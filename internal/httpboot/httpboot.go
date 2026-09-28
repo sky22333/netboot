@@ -165,6 +165,9 @@ func serveDirectory(w http.ResponseWriter, r *http.Request, dir *os.File, reques
 		_, _ = io.WriteString(w, `<li><a href="../">../</a></li>`)
 	}
 	for _, entry := range entries {
+		if filetree.IsUploadTemp(entry.Name()) {
+			continue
+		}
 		name := entry.Name()
 		href := url.PathEscape(name)
 		if entry.IsDir() {

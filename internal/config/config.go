@@ -22,7 +22,8 @@ type Data struct {
 }
 
 type Admin struct {
-	AdminAddr string `toml:"admin_addr"`
+	AdminAddr      string `toml:"admin_addr"`
+	MaxUploadBytes int64  `toml:"max_upload_bytes"`
 }
 
 type Database struct {
@@ -32,7 +33,7 @@ type Database struct {
 func Default() BootConfig {
 	return BootConfig{
 		Data:     Data{Dir: "./data"},
-		Admin:    Admin{AdminAddr: "127.0.0.1:8088"},
+		Admin:    Admin{AdminAddr: "127.0.0.1:8088", MaxUploadBytes: 32 << 30},
 		Database: Database{Path: "pxe.db"},
 	}
 }
@@ -104,6 +105,9 @@ func expandPath(pathValue, dataDir string) string {
 }
 
 func (c BootConfig) Validate() error {
+	if c.Admin.MaxUploadBytes < 1 || c.Admin.MaxUploadBytes > 1<<40 {
+		return errors.New("admin.max_upload_bytes 必须在 1 字节到 1 TiB 之间")
+	}
 	if c.Data.Dir == "" {
 		return errors.New("data.dir 不能为空")
 	}

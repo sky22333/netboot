@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"mime"
-	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -43,6 +42,7 @@ type Backend interface {
 }
 
 type Handler struct {
+	uploadSlots  chan struct{}
 	authSlots    chan struct{}
 	app          Backend
 	loginLimiter *LoginLimiter
@@ -51,10 +51,9 @@ type Handler struct {
 func NewRouter(app Backend) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.MaxMultipartMemory = 8 << 20
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), bodyLimit(128<<20))
-	h := &Handler{app: app, authSlots: make(chan struct{}, 4), loginLimiter: NewLoginLimiter()}
+	h := &Handler{app: app, uploadSlots: make(chan struct{}, 2), authSlots: make(chan struct{}, 4), loginLimiter: NewLoginLimiter()}
 
 	api := r.Group("/api/v1")
 	api.GET("/setup/status", h.setupStatus)
@@ -103,16 +102,9 @@ func NewRouter(app Backend) http.Handler {
 
 func bodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		limit := maxBytes
-		if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
-			limit = (2 << 30) + (1 << 20)
+		if c.Request.Method != http.MethodPost || c.Request.URL.Path != "/api/v1/files/upload" {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
-		defer func() {
-			if c.Request.MultipartForm != nil {
-				_ = c.Request.MultipartForm.RemoveAll()
-			}
-		}()
 		c.Next()
 	}
 }
@@ -509,48 +501,16 @@ func (h *Handler) listFiles(c *gin.Context) {
 	}
 	files := []gin.H{}
 	for _, entry := range entries {
+		if filetree.IsUploadTemp(entry.Name()) {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
 		files = append(files, gin.H{"name": entry.Name(), "dir": entry.IsDir(), "size": info.Size(), "mod_time": info.ModTime(), "editable": !entry.IsDir() && isEditableTextPath(entry.Name()) && info.Size() <= maxEditableFileBytes})
 	}
-	OK(c, gin.H{"root": rootType, "path": rel, "base_path": root.Name(), "files": files})
-}
-
-func (h *Handler) uploadFile(c *gin.Context) {
-	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
-	if settingsErr != nil {
-		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
-		return
-	}
-	root, err := fileRoot(settings, c.DefaultPostForm("root", "http"))
-	if err != nil {
-		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
-		return
-	}
-	defer root.Close()
-	dir, err := filetree.Path(c.DefaultPostForm("path", "."))
-	if err != nil {
-		Fail(c, 400, "PATH_INVALID", "路径无效")
-		return
-	}
-	file, err := c.FormFile("file")
-	if err != nil {
-		Fail(c, 400, "UPLOAD_INVALID", "请选择文件")
-		return
-	}
-	if file.Size > 2<<30 {
-		Fail(c, 400, "UPLOAD_TOO_LARGE", "单个上传文件不能超过 2 GiB")
-		return
-	}
-	dst := filepath.Join(dir, filepath.Base(file.Filename))
-	if err := saveUpload(root, dst, file); err != nil {
-		Fail(c, 500, "UPLOAD_FAILED", err.Error())
-		return
-	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "files", "上传文件", gin.H{"path": dst})
-	OK(c, gin.H{"path": dst})
+	OK(c, gin.H{"root": rootType, "path": rel, "base_path": root.Name(), "max_upload_bytes": h.app.BootConfig().Admin.MaxUploadBytes, "files": files})
 }
 
 func (h *Handler) mkdirFile(c *gin.Context) {
@@ -853,25 +813,6 @@ func fileRoot(settings storage.ServiceSettings, rootType string) (*os.Root, erro
 		return nil, os.ErrInvalid
 	}
 	return os.OpenRoot(dir)
-}
-
-func saveUpload(root *os.Root, path string, header *multipart.FileHeader) error {
-	src, err := header.Open()
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	dst, err := root.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(dst, src)
-	closeErr := dst.Close()
-	if copyErr != nil {
-		_ = root.Remove(path)
-		return copyErr
-	}
-	return closeErr
 }
 
 func isEditableTextPath(path string) bool {

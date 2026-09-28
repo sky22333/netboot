@@ -26,10 +26,29 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data
 }
 
-export async function upload(path: string, form: FormData): Promise<unknown> {
-  const res = await fetch(`/api/v1${path}`, { method: 'POST', body: form, credentials: 'include' })
-  if (res.status === 401) window.dispatchEvent(new Event('pxe-auth-expired'))
-  const payload = await parsePayload<unknown>(res)
-  if (!res.ok || !payload.ok) throw new Error(payload.error?.message || res.statusText || '上传失败')
-  return payload.data
+export function upload(path: string, file: File, signal: AbortSignal, onProgress: (percent: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    const abort = () => xhr.abort()
+    xhr.open('POST', `/api/v1${path}`)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) onProgress(Math.round(event.loaded / event.total * 100))
+    }
+    xhr.onload = () => {
+      if (xhr.status === 401) window.dispatchEvent(new Event('pxe-auth-expired'))
+      try {
+        const payload = JSON.parse(xhr.responseText) as ApiResponse<unknown>
+        if (xhr.status >= 200 && xhr.status < 300 && payload.ok) resolve()
+        else reject(new Error(payload.error?.message || `上传失败（HTTP ${xhr.status}）`))
+      } catch { reject(new Error(`上传响应无效（HTTP ${xhr.status}）`)) }
+    }
+    xhr.onerror = () => reject(new Error('网络中断，上传未确认完成，请刷新目录检查后重试'))
+    xhr.onabort = () => reject(new Error('已取消上传'))
+    xhr.onloadend = () => signal.removeEventListener('abort', abort)
+    if (signal.aborted) { reject(new Error('已取消上传')); return }
+    signal.addEventListener('abort', abort, { once: true })
+    xhr.send(file)
+  })
 }

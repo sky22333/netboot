@@ -33,6 +33,12 @@
       </div>
     </div>
 
+    <div v-if="uploadController" class="card p-4 flex items-center gap-3">
+      <progress class="flex-1" :value="uploadProgress" max="100" />
+      <span>{{ uploadProgress }}%{{ uploadProgress === 100 ? ' · 正在保存' : '' }}</span>
+      <button class="btn" @click="uploadController?.abort()">取消上传</button>
+    </div>
+    <p v-if="maxUploadBytes" class="text-xs text-neutral-500">单文件上传上限：{{ formatSize(maxUploadBytes) }}</p>
     <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div class="card overflow-hidden">
         <div class="flex flex-col gap-3 border-b border-neutral-200 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -225,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, Folder, FolderPlus, Globe2, HardDrive, Info, MoveRight, Pencil, RefreshCw, Save, Trash2, Upload, X } from 'lucide-vue-next'
 import { api, upload } from '../lib/api'
 import type { ServiceConfig } from '../lib/types'
@@ -243,6 +249,7 @@ type FileEntry = {
 type FileListResponse = {
   root: RootKey
   path: string
+  max_upload_bytes: number
   base_path: string
   files: FileEntry[]
 }
@@ -264,6 +271,10 @@ const selected = ref<FileEntry | null>(null)
 const message = ref('')
 const error = ref(false)
 const busy = ref(false)
+const uploadProgress = ref(0)
+const uploadController = ref<AbortController | null>(null)
+const maxUploadBytes = ref(0)
+onBeforeUnmount(() => uploadController.value?.abort())
 const dialog = ref<'mkdir' | 'file' | 'rename' | ''>('')
 const dialogValue = ref('')
 const config = ref<ServiceConfig | null>(null)
@@ -319,6 +330,7 @@ async function load() {
 
 async function fetchFiles(selectPath = '') {
   const res = await api<FileListResponse>(`/files?root=${root.value}&path=${encodeURIComponent(currentPath.value)}`)
+  maxUploadBytes.value = res.max_upload_bytes
   files.value = Array.isArray(res.files) ? res.files : []
   basePath.value = res.base_path || ''
   selected.value = selectPath ? files.value.find(file => fullPath(file.name) === selectPath) ?? null : null
@@ -348,7 +360,7 @@ async function run(task: () => Promise<void>) {
 }
 
 function switchRoot(value: RootKey) {
-  if (root.value === value) return
+  if (busy.value || root.value === value) return
   root.value = value
   currentPath.value = '.'
   persistLocation()
@@ -361,6 +373,7 @@ function fullPath(name: string) {
 }
 
 function goPath(path: string) {
+  if (busy.value) return
   currentPath.value = normalizePath(path)
   persistLocation()
   closeEditor()
@@ -412,14 +425,20 @@ async function confirmDialog() {
 async function onFile(e: Event) {
   const input = e.target as HTMLInputElement
   if (!input.files?.[0]) return
+  const file = input.files[0]
+  const target = new URLSearchParams({ root: root.value, path: fullPath(file.name) })
   await run(async () => {
-    const form = new FormData()
-    form.append('root', root.value)
-    form.append('path', currentPath.value)
-    form.append('file', input.files![0])
-    await upload('/files/upload', form)
-    input.value = ''
-    await refreshCurrentDirectory('', '文件已上传')
+    if (file.size > maxUploadBytes.value) throw new Error(`文件超过上传上限 ${formatSize(maxUploadBytes.value)}`)
+    const controller = new AbortController()
+    uploadController.value = controller
+    uploadProgress.value = 0
+    try {
+      await upload(`/files/upload?${target}`, file, controller.signal, percent => { uploadProgress.value = percent })
+      await refreshCurrentDirectory('', '文件已上传')
+    } finally {
+      uploadController.value = null
+      input.value = ''
+    }
   })
 }
 
