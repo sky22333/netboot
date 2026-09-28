@@ -188,13 +188,13 @@
           </TabsList>
           <div class="max-h-[55dvh] overflow-y-auto">
             <TabsContent value="usage" class="space-y-4">
-              <Card class="p-4">
+              <div>
                 <ol class="list-decimal space-y-3 pl-4 text-sm">
                   <li>下载固件，文件自动保存到 TFTP目录。</li>
                   <li>将文件名填入服务配置的对应架构。</li>
                   <li>保存并重启服务，从客户端网络启动。</li>
                 </ol>
-              </Card>
+              </div>
               <p class="text-sm text-muted-foreground">
                 项目固件进入内置菜单；netboot.xyz
                 默认使用在线菜单，通常无需额外脚本。
@@ -205,7 +205,7 @@
               </p>
             </TabsContent>
             <TabsContent value="scripts" class="space-y-4">
-              <Card class="divide-y">
+              <div class="divide-y">
                 <div v-for="script in helpScripts" :key="script.name">
                   <div class="space-y-1 px-4 py-3">
                     <p class="break-all font-mono text-xs font-medium">
@@ -216,7 +216,7 @@
                     </p>
                   </div>
                 </div>
-              </Card>
+              </div>
               <p class="text-xs text-muted-foreground">
                 自动加载取决于固件和启动方式。netboot.xyz 会在本地 TFTP
                 启动时，自动探测并启动上述文件。

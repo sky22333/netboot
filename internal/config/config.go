@@ -128,7 +128,6 @@ func (c BootConfig) EnsureRuntime() error {
 		filepath.Join(c.Data.Dir, "boot", "tftp"),
 		filepath.Join(c.Data.Dir, "boot", "http"),
 		filepath.Join(c.Data.Dir, "smb"),
-		filepath.Join(c.Data.Dir, "exports"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {

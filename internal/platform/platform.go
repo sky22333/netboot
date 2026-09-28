@@ -33,10 +33,6 @@ func Interfaces() []NetworkInterface {
 	return out
 }
 
-func IsAdminLike() bool {
-	return Permission().AdminLike
-}
-
 func Permission() PermissionInfo {
 	if runtime.GOOS == "windows" {
 		return PermissionInfo{
