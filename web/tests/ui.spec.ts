@@ -166,6 +166,53 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   await page.getByRole("button", { name: "添加账号", exact: true }).click();
   await expect(page.getByText("tester", { exact: true })).toBeVisible();
   await visit("固件下载");
+  await expect(page.getByRole("tab", { name: "项目固件" })).toHaveAttribute(
+    "data-state",
+    "active",
+  );
+  await expect(page.getByRole("tabpanel").getByRole("row")).toHaveCount(4);
+  await expect(page.getByText("ipxe-arm64.efi", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "刷新", exact: true }),
+  ).toHaveAttribute("data-variant", "ghost");
+  await page.screenshot({ path: "../tmp/ui-firmware.png", fullPage: true });
+  await page.getByRole("tab", { name: "netboot.xyz", exact: true }).click();
+  await expect(page.getByRole("tabpanel").getByRole("row")).toHaveCount(5);
+  await expect(
+    page.getByText("netboot/netboot.xyz.efi", { exact: true }),
+  ).toBeVisible();
+  await page.route("**/api/v1/firmware/download", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      source: "netboot",
+      files: ["netboot.xyz.kpxe"],
+    });
+    await route.fulfill({
+      json: {
+        ok: true,
+        data: {
+          downloads: [
+            {
+              file: "netboot.xyz.kpxe",
+              ok: false,
+              error: "下载源返回 HTTP 503，请稍后重试",
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page
+    .getByRole("tabpanel")
+    .getByRole("button", { name: "下载", exact: true })
+    .first()
+    .click();
+  await expect(
+    page.getByText("下载源返回 HTTP 503，请稍后重试", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "下载全部", exact: true }),
+  ).toBeEnabled();
+  await page.unroute("**/api/v1/firmware/download");
   await visit("运行日志");
   expect(
     await page.evaluate(
@@ -208,6 +255,15 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   ]) {
     await page.getByRole("button", { name: "切换导航" }).click();
     await visit(name);
+    if (name === "固件下载") {
+      await expect(
+        page.getByText("ipxe-arm64.efi", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: "../tmp/ui-firmware-mobile.png",
+        fullPage: true,
+      });
+    }
   }
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(

@@ -76,7 +76,7 @@
         <div class="flex items-center gap-2">
           <Button
             v-if="pageRefresh"
-            variant="outline"
+            variant="ghost"
             :disabled="refreshing"
             @click="refresh"
             ><RefreshCw :class="{ 'animate-spin': refreshing }" />{{

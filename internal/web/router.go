@@ -22,7 +22,6 @@ import (
 	"pxe/internal/config"
 	"pxe/internal/dhcp"
 	"pxe/internal/filetree"
-	"pxe/internal/netboot"
 	"pxe/internal/netutil"
 	"pxe/internal/observability"
 	"pxe/internal/platform"
@@ -42,10 +41,11 @@ type Backend interface {
 }
 
 type Handler struct {
-	uploadSlots  chan struct{}
-	authSlots    chan struct{}
-	app          Backend
-	loginLimiter *LoginLimiter
+	firmwareSlots chan struct{}
+	uploadSlots   chan struct{}
+	authSlots     chan struct{}
+	app           Backend
+	loginLimiter  *LoginLimiter
 }
 
 func NewRouter(app Backend) http.Handler {
@@ -53,7 +53,7 @@ func NewRouter(app Backend) http.Handler {
 	r := gin.New()
 	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), bodyLimit(128<<20))
-	h := &Handler{app: app, uploadSlots: make(chan struct{}, 2), authSlots: make(chan struct{}, 4), loginLimiter: NewLoginLimiter()}
+	h := &Handler{app: app, firmwareSlots: make(chan struct{}, 1), uploadSlots: make(chan struct{}, 2), authSlots: make(chan struct{}, 4), loginLimiter: NewLoginLimiter()}
 
 	api := r.Group("/api/v1")
 	api.GET("/setup/status", h.setupStatus)
@@ -93,8 +93,8 @@ func NewRouter(app Backend) http.Handler {
 	protected.DELETE("/files", h.deleteFile)
 	protected.GET("/logs", h.logs)
 	protected.GET("/events/stream", h.eventStream)
-	protected.GET("/netbootxyz/files", h.netbootFiles)
-	protected.POST("/netbootxyz/download", h.netbootDownload)
+	protected.GET("/firmware", h.firmwareCatalog)
+	protected.POST("/firmware/download", h.firmwareDownload)
 
 	r.NoRoute(staticHandler())
 	return r
@@ -758,37 +758,6 @@ func (h *Handler) eventStream(c *gin.Context) {
 			return false
 		}
 	})
-}
-
-func (h *Handler) netbootFiles(c *gin.Context) {
-	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
-	if settingsErr != nil {
-		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
-		return
-	}
-	local := []gin.H{}
-	for _, name := range settings.NetbootXYZ.Files {
-		name = filepath.Base(name)
-		target := filepath.Join(settings.NetbootXYZ.DownloadDir, name)
-		item := gin.H{"file": name, "path": target, "exists": false}
-		if info, err := os.Stat(target); err == nil {
-			item["exists"] = true
-			item["size"] = info.Size()
-			item["mod_time"] = info.ModTime()
-		}
-		local = append(local, item)
-	}
-	OK(c, gin.H{"base_url": settings.NetbootXYZ.BaseURL, "files": settings.NetbootXYZ.Files, "download_dir": settings.NetbootXYZ.DownloadDir, "local": local})
-}
-
-func (h *Handler) netbootDownload(c *gin.Context) {
-	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
-	if settingsErr != nil {
-		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
-		return
-	}
-	results := netboot.Download(c.Request.Context(), settings.NetbootXYZ, h.app.EventHub())
-	OK(c, gin.H{"downloads": results})
 }
 
 const maxEditableFileBytes = 1 << 20

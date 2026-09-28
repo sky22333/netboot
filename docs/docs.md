@@ -13,7 +13,7 @@
 | internal/dhcp | DHCP 地址分配、ProxyDHCP、按架构下发固件 |
 | internal/tftp | 文件传送和可选上传 |
 | internal/httpboot | HTTP 文件传送、Range、健康报告 |
-| internal/netboot | netboot.xyz 固件下载 |
+| internal/firmware | 项目与 netboot.xyz 固件目录、流式下载 |
 | internal/smb | Windows 系统共享 |
 | internal/observability | SSE 事件和日志 |
 | internal/booturl、netutil、command、platform | 地址、网络、命令输出解码和平台工具 |
@@ -57,3 +57,7 @@ Vue 3.5.43 + shadcn-vue 2.8.2 生成的 Reka Nova 组件，运行时依赖 Reka 
 依赖版本与 lockfile 固定。TypeScript 7.0.2 无法被当前 vue-tsc 3.3.11 加载，使用最新兼容稳定版本 6.0.3，不修改第三方包规避不兼容。
 
 VueUse 使用 Reka UI 声明兼容的稳定版本 14.4.0，复用同一份运行时，避免同时打包两个主版本。
+
+## 固件下载
+
+`GET /api/v1/firmware` 只读取本地状态；`POST /api/v1/firmware/download` 接受来源 `project` 或 `netboot` 与目录中允许的文件名数组 `files`。项目固件直接通过 `https://github.com/sky22333/netboot/releases/latest/download/<文件名>` 下载并跟随重定向，不请求 GitHub API。项目文件保存到 TFTP 根目录，netboot.xyz 保存到其配置的下载目录。全局单任务、逐文件流式写入，单文件上限 64 MiB；完成长度检查与磁盘同步后替换同名文件，失败或取消清理临时文件并保留原文件。不会自动修改启动配置。

@@ -4,7 +4,7 @@ Go + Vue 3 构建的单二进制网络启动管理服务，支持 Windows、Linu
 
 - DHCP/ProxyDHCP、TFTP、HTTP Boot；Windows 系统 SMB 共享。
 - 按 BIOS、UEFI IA32/x64/ARM32/ARM64 明确选择启动固件。
-- 客户端绑定、网络唤醒、文件管理、netboot.xyz 固件下载、实时日志和网络诊断。
+- 客户端绑定、网络唤醒、文件管理、项目与 netboot.xyz 固件下载、实时日志和网络诊断。
 - 管理面板必须登录，默认地址为 http://127.0.0.1:8088。
 
 ## 使用

@@ -188,3 +188,20 @@ func TestClientAndFileCRUD(t *testing.T) {
 		t.Fatal("retired config")
 	}
 }
+
+func TestFirmwareCatalogAndSelection(t *testing.T) {
+	r, _ := testRouter(t)
+	if w := request(r, "GET", "/api/v1/firmware", "", ""); w.Code != 401 {
+		t.Fatalf("unauthenticated: %d", w.Code)
+	}
+	token := setupAdmin(t, r)
+	w := request(r, "GET", "/api/v1/firmware", "", token)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "ipxe-arm64.efi") || !strings.Contains(w.Body.String(), "netboot/netboot.xyz.efi") {
+		t.Fatalf("catalog: %d %s", w.Code, w.Body)
+	}
+	for _, body := range []string{`{"source":"project","files":["../escape"]}`, `{"source":"unknown","files":["undionly.kpxe"]}`, `{"source":"project","files":[]}`} {
+		if w := request(r, "POST", "/api/v1/firmware/download", body, token); w.Code != 400 {
+			t.Fatalf("invalid selection: %d %s", w.Code, w.Body)
+		}
+	}
+}

@@ -11,7 +11,7 @@ const router = createRouter({
     { path: "/config", component: () => import("./pages/ConfigPage.vue") },
     { path: "/clients", component: () => import("./pages/ClientsPage.vue") },
     { path: "/files", component: () => import("./pages/FilesPage.vue") },
-    { path: "/netboot", component: () => import("./pages/NetbootPage.vue") },
+    { path: "/netboot", component: () => import("./pages/FirmwarePage.vue") },
     { path: "/users", component: () => import("./pages/UsersPage.vue") },
     { path: "/logs", component: () => import("./pages/LogsPage.vue") },
     {
