@@ -49,7 +49,7 @@
           />
         </div>
         <p v-if="authMode === 'setup'" class="text-xs text-muted-foreground">
-          用户名 3–32 位，支持字母、数字和 . _ @ -；密码至少 8 位。
+          用户名 3–32 位，密码需要 8 位以上。
         </p>
         <Alert v-if="authError" variant="destructive"
           ><AlertDescription>{{ authError }}</AlertDescription></Alert

@@ -107,7 +107,8 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
     .click();
   await page.getByLabel("最大并发", { exact: true }).fill("17");
   await visit("文件管理");
-  await page.getByRole("button", { name: "新建文件", exact: true }).click();
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建文件", exact: true }).click();
   await page
     .getByRole("dialog")
     .getByLabel("名称", { exact: true })
@@ -151,6 +152,129 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   });
   await expect(
     page.getByRole("button", { name: "test.iso", exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "test.iso", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "文件详情" })).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await page.getByRole("button", { name: "test.ipxe", exact: true }).click();
+  await expect(page.getByLabel("文件内容")).toHaveValue("#!ipxe\necho test");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "test.ipxe 的操作", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "重命名", exact: true }).click();
+  await page.getByLabel("新名称", { exact: true }).fill("test.iso");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "确定", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("dialog")
+      .getByText("名称已存在，请换一个名称。", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("新名称", { exact: true }).fill("install.ipxe");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "确定", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "install.ipxe", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("搜索当前目录").fill("install");
+  await expect(
+    page.getByRole("button", { name: "test.iso", exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("搜索当前目录").fill("");
+  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("menuitem", { name: "新建目录", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("名称", { exact: true })
+    .fill("images");
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "确定", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "images 的操作", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "查看详情", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "文件详情" })).toBeVisible();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await page.getByRole("button", { name: "images", exact: true }).click();
+  await expect(
+    page.getByText("目录为空，上传文件或点击“新建”。", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "返回上一级", exact: true }).click();
+  await page
+    .getByRole("button", { name: "images 的操作", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "确认", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "images", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "TFTP目录", exact: true }).click();
+  await expect(
+    page.getByText("存放客户端网络启动所需的固件。", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "HTTP目录", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "install.ipxe", exact: true }),
+  ).toBeVisible();
+
+  let finishUpload!: () => void;
+  const heldUpload = new Promise<void>((resolve) => {
+    finishUpload = resolve;
+  });
+  let uploadStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    uploadStarted = resolve;
+  });
+  await page.route("**/api/v1/files/upload?**", async (route) => {
+    expect(new URL(route.request().url()).searchParams.get("root")).toBe(
+      "http",
+    );
+    uploadStarted();
+    await heldUpload;
+    await route.fulfill({ response: await route.fetch() });
+  });
+  await page.locator("input[type=file]").setInputFiles({
+    name: "background.iso",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.alloc(1024, 2),
+  });
+  await started;
+  await page.getByRole("tab", { name: "TFTP目录", exact: true }).click();
+  await expect(
+    page.getByText("上传到 HTTP目录/background.iso", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "上传文件", exact: true }),
+  ).toBeDisabled();
+  finishUpload();
+  await expect(page.getByText("上传完成", { exact: true })).toBeVisible();
+  await page.unroute("**/api/v1/files/upload?**");
+  await expect(
+    page.getByRole("button", { name: "background.iso", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "HTTP目录", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "background.iso", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "../tmp/ui-files.png", fullPage: true });
   await visit("设备管理");
@@ -278,6 +402,27 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   ]) {
     await page.getByRole("button", { name: "切换导航" }).click();
     await visit(name);
+    if (name === "文件管理") {
+      await page.getByRole("button", { name: "test.iso", exact: true }).click();
+      await expect(
+        page.getByRole("dialog", { name: "文件详情" }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: "../tmp/ui-files-mobile-details.png",
+        animations: "disabled",
+        fullPage: true,
+      });
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "关闭", exact: true })
+        .click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page.screenshot({
+        path: "../tmp/ui-files-mobile.png",
+        animations: "disabled",
+        fullPage: true,
+      });
+    }
     if (name === "固件下载") {
       await expect(
         page.getByText("ipxe-arm64.efi", { exact: true }),
