@@ -50,10 +50,16 @@ func TestUploadPublicationAndCleanup(t *testing.T) {
 	}
 	stale := filetree.UploadTempPrefix + "stale"
 	fresh := filetree.UploadTempPrefix + "fresh"
-	root.WriteFile(stale, nil, 0600)
-	root.WriteFile(fresh, nil, 0600)
+	if err := root.WriteFile(stale, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.WriteFile(fresh, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	old := time.Now().Add(-25 * time.Hour)
-	root.Chtimes(stale, old, old)
+	if err := root.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
 	cleanupUploads(root)
 	if _, err := root.Stat(stale); !os.IsNotExist(err) {
 		t.Fatal("stale file retained")
@@ -107,7 +113,9 @@ func TestStreamingUploadHTTP(t *testing.T) {
 	}
 	root, _ := os.OpenRoot(settings.HTTPBoot.Root)
 	defer root.Close()
-	root.WriteFile(filetree.UploadTempPrefix+"hidden", []byte("private"), 0600)
+	if err := root.WriteFile(filetree.UploadTempPrefix+"hidden", []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	w := request(r, "GET", "/api/v1/files?root=http", "", token)
 	if w.Code != 200 || strings.Contains(w.Body.String(), "hidden") || !strings.Contains(w.Body.String(), "34359738368") {
 		t.Fatal(w.Body)

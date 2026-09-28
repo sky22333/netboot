@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -99,17 +100,24 @@ func sessionHash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (h *Handler) sessionValid(ctx context.Context, token string) bool {
+func (h *Handler) sessionUserID(ctx context.Context, token string) int64 {
 	if len(token) != 43 {
-		return false
+		return 0
 	}
 	var id int64
 	err := h.app.Storage().RawDB().QueryRowContext(ctx, `SELECT u.id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires>unixepoch() AND u.enabled=1`, sessionHash(token)).Scan(&id)
-	return err == nil
+	if err != nil {
+		return 0
+	}
+	return id
+}
+func (h *Handler) sessionValid(ctx context.Context, token string) bool {
+	return h.sessionUserID(ctx, token) != 0
 }
 func (h *Handler) requireAuth(c *gin.Context) {
 	token, _ := c.Cookie("pxe_session")
-	if h.sessionValid(c.Request.Context(), token) {
+	if id := h.sessionUserID(c.Request.Context(), token); id != 0 {
+		c.Set("user_id", id)
 		c.Next()
 		return
 	}
@@ -180,9 +188,22 @@ func (h *Handler) createUser(ctx context.Context, username, password string, ini
 	return nil
 }
 
-func (h *Handler) changePassword(ctx context.Context, id int64, password string) error {
-	if len(password) < 8 || len(password) > 1024 {
-		return fmt.Errorf("密码长度需为 8-1024 字节")
+var errCurrentPassword = errors.New("当前密码不正确")
+var errPasswordConflict = errors.New("账号或会话已变化，请刷新后重试")
+var errPasswordForbidden = errors.New("只有管理员可以重置其他账号密码")
+
+func (h *Handler) changePassword(ctx context.Context, token string, actor, id int64, current, password string) error {
+	var previous, role string
+	err := h.app.Storage().RawDB().QueryRowContext(ctx, `SELECT target.password_hash,actor.role FROM users target JOIN users actor ON actor.id=? WHERE target.id=?`, actor, id).Scan(&previous, &role)
+	if err != nil {
+		return err
+	}
+	if actor == id {
+		if current == "" || !verifyPassword(previous, current) {
+			return errCurrentPassword
+		}
+	} else if role != "admin" {
+		return errPasswordForbidden
 	}
 	hash, err := hashPassword(password)
 	if err != nil {
@@ -192,14 +213,19 @@ func (h *Handler) changePassword(ctx context.Context, id int64, password string)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash=?,updated_at=? WHERE id=?`, hash, time.Now().UTC().Format(time.RFC3339), id)
+	// A committed transaction needs no rollback; preserve the original error otherwise.
+	defer func() { _ = tx.Rollback() }()
+	// Recheck both target version and actor authorization after password hashing.
+	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash=?,updated_at=? WHERE id=? AND password_hash=? AND EXISTS (SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND u.id=? AND u.enabled=1 AND s.expires>unixepoch() AND (u.id=? OR u.role='admin'))`, hash, time.Now().UTC().Format(time.RFC3339), id, previous, sessionHash(token), actor, id)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n == 0 {
-		return fmt.Errorf("用户不存在")
+		return errPasswordConflict
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id=?`, id); err != nil {
 		return err
@@ -226,7 +252,8 @@ func (h *Handler) loginSession(ctx context.Context, username, password string) (
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	// A committed transaction needs no rollback; preserve the original error otherwise.
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE expires<=unixepoch()`); err != nil {
 		return "", err
 	}

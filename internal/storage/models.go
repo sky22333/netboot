@@ -81,6 +81,7 @@ type Client struct {
 }
 
 type User struct {
+	Current   bool   `json:"current"`
 	ID        int64  `json:"id"`
 	Username  string `json:"username"`
 	Role      string `json:"role"`

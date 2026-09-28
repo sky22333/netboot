@@ -24,7 +24,8 @@ func renameNoReplace(dir *os.File, from, to string) error {
 	if err != nil {
 		return err.(windows.NTStatus).Errno()
 	}
-	defer windows.CloseHandle(handle)
+	// Closing the handle must not obscure the rename result.
+	defer func() { _ = windows.CloseHandle(handle) }()
 	target, err := windows.UTF16FromString(to)
 	if err != nil {
 		return err

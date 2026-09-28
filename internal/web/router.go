@@ -2,12 +2,12 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"mime"
 	"net"
 	"net/http"
@@ -81,7 +81,7 @@ func NewRouter(app Backend) http.Handler {
 	protected.POST("/clients/:id/clear-mac", h.clearClientMAC)
 	protected.GET("/users", h.listUsers)
 	protected.POST("/users", h.createUserAPI)
-	protected.POST("/users/:id/password", h.changeUserPassword)
+	protected.POST("/users/:id/password", h.limitAuthWork, h.changeUserPassword)
 	protected.DELETE("/users/:id", h.deleteUser)
 	protected.GET("/files", h.listFiles)
 	protected.GET("/files/content", h.getFileContent)
@@ -399,6 +399,9 @@ func (h *Handler) listUsers(c *gin.Context) {
 		Fail(c, 500, "USER_LIST_FAILED", err.Error())
 		return
 	}
+	for i := range users {
+		users[i].Current = users[i].ID == c.GetInt64("user_id")
+	}
 	OK(c, users)
 }
 
@@ -429,17 +432,40 @@ func (h *Handler) changeUserPassword(c *gin.Context) {
 	if !valid {
 		return
 	}
-	var req struct{ Password string }
-	if err := c.ShouldBindJSON(&req); err != nil || len(req.Password) < 8 {
-		Fail(c, 400, "PASSWORD_INVALID", "密码至少 8 位")
+	var req struct {
+		Password        string `json:"password"`
+		CurrentPassword string `json:"current_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Password) < 8 || len(req.Password) > 1024 || len(req.CurrentPassword) > 1024 {
+		Fail(c, 400, "PASSWORD_INVALID", "新密码需为 8-1024 字节")
 		return
 	}
-	if err := h.changePassword(c.Request.Context(), id, req.Password); err != nil {
-		Fail(c, 500, "PASSWORD_CHANGE_FAILED", err.Error())
+	actor := c.GetInt64("user_id")
+	key := fmt.Sprintf("password:%d", actor)
+	if !h.loginLimiter.Allow(key) {
+		Fail(c, 429, "PASSWORD_RATE_LIMITED", "尝试过多，请 10 分钟后再试")
 		return
 	}
 	token, _ := c.Cookie("pxe_session")
-	OK(c, gin.H{"reauthenticate": !h.sessionValid(c.Request.Context(), token)})
+	if err := h.changePassword(c.Request.Context(), token, actor, id, req.CurrentPassword, req.Password); err != nil {
+		status := 500
+		switch {
+		case errors.Is(err, errCurrentPassword):
+			status = 400
+			h.loginLimiter.Fail(key)
+		case errors.Is(err, errPasswordForbidden):
+			status = 403
+		case errors.Is(err, sql.ErrNoRows):
+			Fail(c, 404, "USER_NOT_FOUND", "账号不存在")
+			return
+		case errors.Is(err, errPasswordConflict):
+			status = 409
+		}
+		Fail(c, status, "PASSWORD_CHANGE_FAILED", err.Error())
+		return
+	}
+	h.loginLimiter.Success(key)
+	OK(c, gin.H{"reauthenticate": actor == id})
 }
 
 func (h *Handler) deleteUser(c *gin.Context) {
@@ -868,15 +894,8 @@ func staticHandler() gin.HandlerFunc {
 			return
 		}
 		target := "dist/index.html"
-		if path == "/" {
-			target = "dist/index.html"
-		} else {
-			candidate := "dist" + path
-			if _, err := fs.Stat(webFS, candidate); err == nil {
-				target = candidate
-			} else {
-				target = "dist/index.html"
-			}
+		if strings.HasPrefix(path, "/assets/") {
+			target = "dist" + path
 		}
 		data, err := webFS.ReadFile(target)
 		if err != nil {

@@ -329,7 +329,8 @@ func (s *Store) UpsertClient(ctx context.Context, c Client) (Client, error) {
 	if err != nil {
 		return Client{}, err
 	}
-	defer tx.Rollback()
+	// A committed transaction needs no rollback; preserve the original error otherwise.
+	defer func() { _ = tx.Rollback() }()
 	c, err = upsertClient(ctx, tx, c)
 	if err != nil {
 		return Client{}, err
@@ -396,7 +397,8 @@ func (s *Store) BatchCreateClients(ctx context.Context, prefix, ipStart string, 
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	// A committed transaction needs no rollback; preserve the original error otherwise.
+	defer func() { _ = tx.Rollback() }()
 	base := binaryBig(start)
 	if uint64(base)+uint64(count)-1 > 0xffffffff {
 		return nil, fmt.Errorf("地址范围溢出")
@@ -495,7 +497,8 @@ func (s *Store) RecordEvent(e Event) (Event, error) {
 	if err != nil {
 		return e, err
 	}
-	defer tx.Rollback()
+	// A committed transaction needs no rollback; preserve the original error otherwise.
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.Exec(`INSERT INTO events(time,level,source,message) VALUES(?,?,?,?)`, e.Time, e.Level, e.Source, e.Message)
 	if err != nil {
 		return e, err

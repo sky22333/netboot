@@ -20,7 +20,8 @@ func (s *Store) LeaseAddress(ctx context.Context, cfg ServiceSettings, mac, requ
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	// A committed transaction needs no rollback; preserve the original error otherwise.
+	defer func() { _ = tx.Rollback() }()
 	now := time.Now().Unix()
 	if _, err = tx.ExecContext(ctx, `DELETE FROM leases WHERE expires<=?`, now); err != nil {
 		return "", err

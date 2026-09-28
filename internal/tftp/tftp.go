@@ -105,7 +105,7 @@ func parseRequestOptions(parts []string) (map[string]string, error) {
 	for i := 2; i+1 < len(parts); i += 2 {
 		key := strings.ToLower(strings.TrimSpace(parts[i]))
 		if _, exists := opts[key]; key == "" || exists {
-			return nil, fmt.Errorf("Invalid or duplicate option")
+			return nil, fmt.Errorf("invalid or duplicate option")
 		}
 		opts[key] = strings.TrimSpace(parts[i+1])
 	}
@@ -206,7 +206,7 @@ func negotiatedBlockSize(options map[string]string, maximum int) (int, error) {
 	if raw, ok := options["blksize"]; ok {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 8 || n > 65464 {
-			return 0, fmt.Errorf("Invalid blksize")
+			return 0, fmt.Errorf("invalid blksize")
 		}
 		if maximum < 8 {
 			maximum = 1428
@@ -214,7 +214,7 @@ func negotiatedBlockSize(options map[string]string, maximum int) (int, error) {
 		size = min(n, maximum, 1428)
 	}
 	if raw, ok := options["tsize"]; ok && raw != "0" {
-		return 0, fmt.Errorf("Invalid tsize")
+		return 0, fmt.Errorf("invalid tsize")
 	}
 	return size, nil
 }

@@ -76,15 +76,9 @@
             {{ u.role === "admin" ? "管理员" : u.role }}
           </div>
           <div class="flex gap-2 justify-start sm:justify-end">
-            <Button
-              variant="outline"
-              @click="
-                passwordUser = u;
-                nextPassword = '';
-                passwordError = '';
-              "
-              >修改密码</Button
-            >
+            <Button variant="outline" @click="openPassword(u)">{{
+              u.current ? "修改密码" : "重置密码"
+            }}</Button>
             <Button
               variant="destructive"
               :disabled="isDefaultAdmin(u) || deletingId === u.id"
@@ -112,7 +106,7 @@
       :open="!!passwordUser"
       @update:open="
         (open) => {
-          if (!open && !changingPassword) passwordUser = null;
+          if (!open && !changingPassword) closePassword();
         }
       "
     >
@@ -130,30 +124,81 @@
         "
       >
         <DialogHeader
-          ><DialogTitle>修改密码</DialogTitle
+          ><DialogTitle>{{
+            passwordUser?.current ? "修改密码" : "重置密码"
+          }}</DialogTitle
           ><DialogDescription
             >{{ passwordUser?.username }} ·
             修改后该账号需重新登录。</DialogDescription
           ></DialogHeader
         >
         <form class="space-y-4" @submit.prevent="changePassword">
+          <input
+            class="sr-only"
+            aria-label="目标账号"
+            autocomplete="username"
+            :value="passwordUser?.username"
+            readonly
+            tabindex="-1"
+          />
+          <div v-if="passwordUser?.current" class="space-y-2">
+            <Label for="current-password">当前密码</Label>
+            <Input
+              id="current-password"
+              v-model="currentPassword"
+              :type="showPasswords ? 'text' : 'password'"
+              autocomplete="current-password"
+              :disabled="changingPassword"
+              required
+            />
+          </div>
           <div class="space-y-2">
             <Label for="new-password">新密码</Label
             ><Input
               id="new-password"
               v-model="nextPassword"
-              type="password"
+              :type="showPasswords ? 'text' : 'password'"
               autocomplete="new-password"
               :disabled="changingPassword"
               minlength="8"
               required
             />
           </div>
+          <div class="space-y-2">
+            <Label for="confirm-password">确认新密码</Label>
+            <Input
+              id="confirm-password"
+              v-model="confirmPassword"
+              :type="showPasswords ? 'text' : 'password'"
+              autocomplete="new-password"
+              :disabled="changingPassword"
+              required
+              :aria-invalid="
+                !!confirmPassword && confirmPassword !== nextPassword
+              "
+              aria-describedby="password-match"
+            />
+            <p
+              v-if="confirmPassword && confirmPassword !== nextPassword"
+              id="password-match"
+              class="text-sm text-destructive"
+            >
+              两次输入的密码不一致
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            :aria-pressed="showPasswords"
+            @click="showPasswords = !showPasswords"
+            >{{ showPasswords ? "隐藏密码" : "显示密码" }}</Button
+          >
           <Feedback :message="passwordError" :error="true" />
           <DialogFooter
             ><Button
               type="submit"
-              :disabled="changingPassword || nextPassword.length < 8"
+              :disabled="changingPassword || !canChangePassword"
               >{{ changingPassword ? "保存中..." : "保存密码" }}</Button
             ></DialogFooter
           >
@@ -184,6 +229,7 @@ import { computed, onMounted, ref } from "vue";
 import { api } from "../lib/api";
 
 type User = {
+  current: boolean;
   id: number;
   username: string;
   role: string;
@@ -194,15 +240,36 @@ type User = {
 const users = ref<User[]>([]);
 const passwordUser = ref<User | null>(null);
 const nextPassword = ref("");
+const currentPassword = ref("");
+const confirmPassword = ref("");
+const showPasswords = ref(false);
+const canChangePassword = computed(
+  () =>
+    !!passwordUser.value &&
+    (!passwordUser.value.current || currentPassword.value.length > 0) &&
+    nextPassword.value.length >= 8 &&
+    new TextEncoder().encode(nextPassword.value).length <= 1024 &&
+    nextPassword.value === confirmPassword.value,
+);
+
+function closePassword() {
+  passwordUser.value = null;
+  currentPassword.value = "";
+  nextPassword.value = "";
+  confirmPassword.value = "";
+  passwordError.value = "";
+  showPasswords.value = false;
+}
+function openPassword(user: User) {
+  closePassword();
+  passwordUser.value = user;
+}
+
 const changingPassword = ref(false);
 const passwordError = ref("");
 
 async function changePassword() {
-  if (
-    !passwordUser.value ||
-    changingPassword.value ||
-    nextPassword.value.length < 8
-  )
+  if (!passwordUser.value || changingPassword.value || !canChangePassword.value)
     return;
   changingPassword.value = true;
   passwordError.value = "";
@@ -211,12 +278,16 @@ async function changePassword() {
       `/users/${passwordUser.value.id}/password`,
       {
         method: "POST",
-        body: JSON.stringify({ password: nextPassword.value }),
+        body: JSON.stringify({
+          password: nextPassword.value,
+          current_password: passwordUser.value.current
+            ? currentPassword.value
+            : undefined,
+        }),
       },
     );
-    passwordUser.value = null;
-    nextPassword.value = "";
-    message.value = "密码已修改";
+    message.value = passwordUser.value.current ? "密码已修改" : "密码已重置";
+    closePassword();
     error.value = false;
     if (result.reauthenticate)
       window.dispatchEvent(new Event("pxe-auth-expired"));

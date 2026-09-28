@@ -50,7 +50,9 @@ func TestStandardTransferEndsWithEmptyBlock(t *testing.T) {
 	}()
 	for i, want := range []int{516, 4} {
 		buf := make([]byte, 2048)
-		client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		n, remote, err := client.ReadFrom(buf)
 		if err != nil {
 			t.Fatal(err)
@@ -59,7 +61,9 @@ func TestStandardTransferEndsWithEmptyBlock(t *testing.T) {
 			t.Fatalf("packet %d: %x (%d)", i, buf[:n], n)
 		}
 		ack := []byte{0, opACK, 0, byte(i + 1)}
-		client.WriteTo(ack, remote)
+		if _, err := client.WriteTo(ack, remote); err != nil {
+			t.Fatal(err)
+		}
 	}
 	select {
 	case <-done:
@@ -83,7 +87,9 @@ func TestTransferCancellationInterruptsAckWait(t *testing.T) {
 		sendContent(ctx, cfg, observability.NewHub(nil), "kernel", client.LocalAddr(), nil, bytes.NewReader([]byte("x")), 1)
 	}()
 	buf := make([]byte, 1024)
-	client.SetReadDeadline(time.Now().Add(time.Second))
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err = client.ReadFrom(buf); err != nil {
 		cancel()
 		t.Fatal(err)
@@ -119,7 +125,9 @@ func TestFirmwareServedFromTFTPRoot(t *testing.T) {
 				defer close(done)
 				sendFile(ctx, cfg, observability.NewHub(nil), name, client.LocalAddr(), nil)
 			}()
-			client.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
 			buf := make([]byte, 1024)
 			n, remote, err := client.ReadFrom(buf)
 			if err != nil {
@@ -172,7 +180,9 @@ func TestLostOACKAckRetransmitsWithoutChangingBlockSize(t *testing.T) {
 	}()
 	buf := make([]byte, 2048)
 	for i := 0; i < 2; i++ {
-		client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		n, remote, err := client.ReadFrom(buf)
 		if err != nil {
 			t.Fatal(err)
@@ -181,11 +191,15 @@ func TestLostOACKAckRetransmitsWithoutChangingBlockSize(t *testing.T) {
 			t.Fatalf("changed OACK: %x", buf[:n])
 		}
 		if i == 1 {
-			client.WriteTo([]byte{0, opACK, 0, 0}, remote)
+			if _, err := client.WriteTo([]byte{0, opACK, 0, 0}, remote); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	for i, want := range []int{1028, 4} {
-		client.SetReadDeadline(time.Now().Add(time.Second))
+		if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		n, remote, err := client.ReadFrom(buf)
 		if err != nil {
 			t.Fatal(err)
@@ -193,7 +207,9 @@ func TestLostOACKAckRetransmitsWithoutChangingBlockSize(t *testing.T) {
 		if n != want || binary.BigEndian.Uint16(buf[:2]) != opDATA {
 			t.Fatalf("changed data size: %d", n)
 		}
-		client.WriteTo([]byte{0, opACK, 0, byte(i + 1)}, remote)
+		if _, err := client.WriteTo([]byte{0, opACK, 0, byte(i + 1)}, remote); err != nil {
+			t.Fatal(err)
+		}
 	}
 	<-done
 }
@@ -205,7 +221,9 @@ func TestWriteRequestsAreRejected(t *testing.T) {
 	}
 	defer client.Close()
 	handle(context.Background(), testSettings(t), observability.NewHub(nil), append([]byte{0, opWRQ}, []byte("file\x00octet\x00")...), client.LocalAddr())
-	client.SetReadDeadline(time.Now().Add(time.Second))
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	buf := make([]byte, 512)
 	n, _, err := client.ReadFrom(buf)
 	if err != nil || n < 4 || binary.BigEndian.Uint16(buf[:2]) != opERROR || binary.BigEndian.Uint16(buf[2:4]) != errAccessViolation {

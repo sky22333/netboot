@@ -86,23 +86,14 @@ func testStoreAndSettings(t *testing.T, ctx context.Context) (*storage.Store, st
 	return store, settings
 }
 
-func testSettings(t *testing.T) storage.ServiceSettings {
-	t.Helper()
-	dir := t.TempDir()
-	return storage.ServiceSettings{
-		HTTPBoot: storage.HTTPBootSettings{Root: filepath.Join(dir, "http")},
-	}
-}
-
 func TestStaticScriptIsServed(t *testing.T) {
 	store, cfg := testStoreAndSettings(t, context.Background())
 	handler := Handler(cfg, observability.NewHub(store))
-	rec := httptest.NewRecorder()
 	script := "#!ipxe\nexit\n"
 	if err := os.WriteFile(filepath.Join(cfg.HTTPBoot.Root, "boot.ipxe"), []byte(script), 0644); err != nil {
 		t.Fatal(err)
 	}
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/boot.ipxe", nil))
 	if rec.Code != 200 || rec.Body.String() != script {
 		t.Fatal("boot script not served verbatim")
@@ -131,14 +122,22 @@ func TestEqualSizeSameSecondEditChangesETag(t *testing.T) {
 	store, cfg := testStoreAndSettings(t, context.Background())
 	file := filepath.Join(cfg.HTTPBoot.Root, "script.ipxe")
 	stamp := time.Unix(1700000000, 100000000)
-	os.WriteFile(file, []byte("old"), 0644)
-	os.Chtimes(file, stamp, stamp)
+	if err := os.WriteFile(file, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	handler := Handler(cfg, observability.NewHub(store))
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest("GET", "/script.ipxe", nil))
-	os.WriteFile(file, []byte("new"), 0644)
+	if err := os.WriteFile(file, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	stamp = stamp.Add(100 * time.Millisecond)
-	os.Chtimes(file, stamp, stamp)
+	if err := os.Chtimes(file, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest("GET", "/script.ipxe", nil)
 	req.Header.Set("If-None-Match", first.Header().Get("ETag"))
 	next := httptest.NewRecorder()

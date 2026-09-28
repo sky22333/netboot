@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -93,7 +95,12 @@ func saveDownload(ctx context.Context, root *os.Root, name string, body io.Reade
 	if err != nil {
 		return "", err
 	}
-	defer func() { f.Close(); root.Remove(temp) }()
+	defer func() {
+		if err := root.Remove(temp); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("清理临时文件失败", "path", temp, "error", err)
+		}
+	}()
+	defer f.Close()
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(body, maxFirmwareBytes+1))
 	if err != nil {

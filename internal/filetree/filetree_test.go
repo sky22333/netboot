@@ -17,9 +17,15 @@ func TestRootRejectsExternalSymlink(t *testing.T) {
 	base := t.TempDir()
 	rootDir := filepath.Join(base, "root")
 	outside := filepath.Join(base, "outside")
-	os.Mkdir(rootDir, 0755)
-	os.Mkdir(outside, 0755)
-	os.WriteFile(filepath.Join(outside, "secret"), []byte("private"), 0644)
+	if err := os.Mkdir(rootDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("private"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(rootDir, "escape")); err != nil {
 		t.Skipf("symlink permission unavailable: %v", err)
 	}

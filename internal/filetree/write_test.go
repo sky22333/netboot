@@ -18,11 +18,19 @@ func TestRenameNeverReplacesFilesOrDirectories(t *testing.T) {
 		from, to := "a", "b"
 		if directory {
 			from, to = "da", "db"
-			root.Mkdir(from, 0755)
-			root.Mkdir(to, 0755)
+			if err := root.Mkdir(from, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := root.Mkdir(to, 0755); err != nil {
+				t.Fatal(err)
+			}
 		} else {
-			root.WriteFile(from, []byte("A"), 0644)
-			root.WriteFile(to, []byte("B"), 0644)
+			if err := root.WriteFile(from, []byte("A"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := root.WriteFile(to, []byte("B"), 0644); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := Rename(root, from, to); !errors.Is(err, os.ErrExist) {
 			t.Fatalf("overwrite directory=%v: %v", directory, err)

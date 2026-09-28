@@ -65,7 +65,8 @@ func (h *Handler) uploadFile(c *gin.Context) {
 	// Bound slow uploads without buffering the request. The browser sends the File directly.
 	controller := http.NewResponseController(c.Writer)
 	_ = controller.SetReadDeadline(time.Now().Add(6 * time.Hour))
-	defer controller.SetReadDeadline(time.Time{})
+	// Deadline reset is best effort, including writers without deadline support.
+	defer func() { _ = controller.SetReadDeadline(time.Time{}) }()
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	if err := saveUpload(c.Request.Context(), dir, name, c.Request.Body, c.Request.ContentLength); err != nil {
 		status := http.StatusInternalServerError

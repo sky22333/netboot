@@ -26,7 +26,9 @@ func testApp(t *testing.T) (*App, storage.ServiceSettings) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		a.StopServices(ctx)
+		if err := a.StopServices(ctx); err != nil {
+			t.Error(err)
+		}
 		store.Close()
 	})
 	cfg := store.DefaultSettings()

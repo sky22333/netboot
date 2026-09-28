@@ -73,7 +73,7 @@ func TestSessionRevocationExpirationAndDeletion(t *testing.T) {
 		t.Fatal("logged out token accepted")
 	}
 	token = loginToken(t, r, "admin", "password123")
-	if w := request(r, "POST", "/api/v1/users/1/password", `{"Password":"newpassword123"}`, token); w.Code != 200 {
+	if w := request(r, "POST", "/api/v1/users/1/password", `{"password":"newpassword123","current_password":"password123"}`, token); w.Code != 200 {
 		t.Fatal(w.Body)
 	}
 	if w := request(r, "GET", "/api/v1/status", "", token); w.Code != 401 {
@@ -129,7 +129,9 @@ func TestSetupAtomicAndRemovedRoutesAbsent(t *testing.T) {
 	defer rows.Close()
 	for rows.Next() {
 		var n string
-		rows.Scan(&n)
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
 		tables = append(tables, n)
 	}
 	for _, n := range tables {
@@ -245,6 +247,97 @@ func TestRetiredWriteAndReportEndpointsAreAbsent(t *testing.T) {
 	for _, path := range []string{"/api/v1/clients/report", "/api/v1/config/validate", "/api/v1/services/restart"} {
 		if w := request(r, "POST", path, `{}`, token); w.Code != 404 {
 			t.Fatalf("%s returned %d", path, w.Code)
+		}
+	}
+}
+
+func TestOwnPasswordRequiresCurrentPassword(t *testing.T) {
+	r, _ := testRouter(t)
+	token := setupAdmin(t, r)
+	for _, body := range []string{
+		`{"password":"replacement123"}`,
+		`{"password":"replacement123","current_password":"incorrect"}`,
+		`{"password":"replacement123","current":false,"reset":true,"actor":2}`,
+	} {
+		if w := request(r, "POST", "/api/v1/users/1/password", body, token); w.Code != 400 {
+			t.Fatalf("bypassed current password: %d %s", w.Code, w.Body)
+		}
+	}
+	if w := request(r, "GET", "/api/v1/status", "", token); w.Code != 200 {
+		t.Fatal("failed change revoked session")
+	}
+	second := loginToken(t, r, "admin", "password123")
+	if w := request(r, "POST", "/api/v1/users/1/password", `{"password":"replacement123","current_password":"password123"}`, token); w.Code != 200 || !strings.Contains(w.Body.String(), `"reauthenticate":true`) {
+		t.Fatal(w.Code, w.Body)
+	}
+	for _, session := range []string{token, second} {
+		if w := request(r, "GET", "/api/v1/status", "", session); w.Code != 401 {
+			t.Fatal("old session remains valid")
+		}
+	}
+	loginToken(t, r, "admin", "replacement123")
+	if w := request(r, "POST", "/api/v1/auth/login", `{"username":"admin","password":"password123"}`, ""); w.Code != 401 {
+		t.Fatal("old password remains valid")
+	}
+}
+
+func TestAdminResetAndCurrentIdentity(t *testing.T) {
+	r, s := testRouter(t)
+	admin := setupAdmin(t, r)
+	if w := request(r, "POST", "/api/v1/users", `{"username":"second","password":"password123"}`, admin); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	target := loginToken(t, r, "second", "password123")
+	other := loginToken(t, r, "second", "password123")
+	for _, session := range []struct {
+		token string
+		id    int64
+	}{{admin, 1}, {target, 2}} {
+		w := request(r, "GET", "/api/v1/users", "", session.token)
+		var body struct {
+			Data []storage.User `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		for _, user := range body.Data {
+			if user.Current != (user.ID == session.id) {
+				t.Fatal("wrong current identity", body)
+			}
+		}
+	}
+	if w := request(r, "POST", "/api/v1/users/2/password", `{"password":"reset-password123"}`, admin); w.Code != 200 || !strings.Contains(w.Body.String(), `"reauthenticate":false`) {
+		t.Fatal(w.Code, w.Body)
+	}
+	for _, token := range []string{target, other} {
+		if w := request(r, "GET", "/api/v1/status", "", token); w.Code != 401 {
+			t.Fatal("target session not revoked")
+		}
+	}
+	if w := request(r, "GET", "/api/v1/status", "", admin); w.Code != 200 {
+		t.Fatal("actor session revoked")
+	}
+	target = loginToken(t, r, "second", "reset-password123")
+	if _, err := s.RawDB().Exec(`UPDATE users SET role='viewer' WHERE id=2`); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(r, "POST", "/api/v1/users/1/password", `{"password":"forbidden123"}`, target); w.Code != 403 {
+		t.Fatal("non-admin reset accepted", w.Code)
+	}
+	loginToken(t, r, "admin", "password123")
+}
+
+func TestStaticPagesAndMissingAssets(t *testing.T) {
+	r, _ := testRouter(t)
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{
+		{"/", 200}, {"/files", 200}, {"/assets/missing.js", 404}, {"/unknown-page", 404},
+	} {
+		w := request(r, "GET", tc.path, "", "")
+		if w.Code != tc.status {
+			t.Fatalf("%s: got %d, want %d", tc.path, w.Code, tc.status)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,11 @@ func Write(ctx context.Context, root *os.Root, name string, src io.Reader, size 
 	if err != nil {
 		return err
 	}
-	defer root.Remove(temp)
+	defer func() {
+		if err := root.Remove(temp); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("清理临时文件失败", "path", temp, "error", err)
+		}
+	}()
 	defer f.Close()
 	n, err := io.Copy(f, src)
 	if err != nil {

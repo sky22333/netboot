@@ -289,6 +289,24 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
   await page.getByLabel("密码", { exact: true }).fill("password456");
   await page.getByRole("button", { name: "添加账号", exact: true }).click();
   await expect(page.getByText("tester", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "重置密码", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "重置密码" })).toBeVisible();
+  await expect(page.getByLabel("当前密码", { exact: true })).toHaveCount(0);
+  await page.getByLabel("新密码", { exact: true }).fill("reset-password456");
+  await page
+    .getByLabel("确认新密码", { exact: true })
+    .fill("reset-password456");
+  await page.getByRole("button", { name: "显示密码", exact: true }).click();
+  await expect(page.getByLabel("新密码", { exact: true })).toHaveAttribute(
+    "type",
+    "text",
+  );
+  await page.getByRole("button", { name: "保存密码", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "账号管理", exact: true }),
+  ).toBeVisible();
+
   await visit("固件下载");
   await page.getByRole("button", { name: "启动说明", exact: true }).click();
   await expect(
@@ -454,7 +472,15 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
     .getByRole("button", { name: "修改密码", exact: true })
     .first()
     .click();
+  await page.getByLabel("当前密码", { exact: true }).fill("password123");
   await page.getByLabel("新密码", { exact: true }).fill("changed-password123");
+  await page.getByLabel("确认新密码", { exact: true }).fill("mismatch");
+  await expect(
+    page.getByRole("button", { name: "保存密码", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("确认新密码", { exact: true })
+    .fill("changed-password123");
   await page.getByRole("button", { name: "保存密码", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "登录", exact: true }),
