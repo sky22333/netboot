@@ -161,17 +161,28 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
-	if isIPXE {
-		// The running firmware owns its boot flow. ProxyDHCP has no second-stage
-		// target to advertise; complete DHCP still supplies network configuration.
+	boot := executableBootFile(settings, arch)
+	if isIPXE && !isNetbootXYZ(boot) {
+		// Generic iPXE must not chainload itself. netboot.xyz needs the original
+		// boot metadata after DHCP to enter its built-in local TFTP flow.
 		if proxy || settings.DHCP.Mode != "dhcp" {
 			return nil
 		}
 		return offerNetworkConfig(req, settings, clientIP)
 	}
-	boot := executableBootFile(settings, arch)
 	events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原始 PXE 可执行启动文件: %s", mac, boot))
 	return offerBootFile(req, settings, clientIP, boot, []byte{6, 1, 8, 255}, proxy)
+}
+
+// Match only root-level filenames shipped by the firmware catalog. Renamed or
+// custom binaries cannot safely be assumed to contain netboot.xyz's script.
+func isNetbootXYZ(boot string) bool {
+	switch boot {
+	case "netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi":
+		return true
+	default:
+		return false
+	}
 }
 
 func executableBootFile(settings storage.ServiceSettings, arch string) string {
@@ -207,6 +218,10 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	nextServerIP := net.IPv4zero.To4()
 	if includePXE {
 		nextServerIP = serverIP
+	}
+	// ProxyDHCP supplies boot metadata, never an address lease.
+	if proxy {
+		yiaddr = "0.0.0.0"
 	}
 	yi := net.ParseIP(yiaddr).To4()
 	if yi == nil {

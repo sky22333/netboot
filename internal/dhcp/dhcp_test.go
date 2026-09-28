@@ -356,3 +356,56 @@ func TestResponseHasOneDestination(t *testing.T) {
 		t.Fatal("relay request accepted")
 	}
 }
+
+func TestNetbootXYZSecondDHCP(t *testing.T) {
+	for _, proxy := range []bool{false, true} {
+		for _, tc := range []struct {
+			arch byte
+			file string
+		}{
+			{0, "netboot.xyz.kpxe"}, {0, "netboot.xyz-undionly.kpxe"}, {7, "netboot.xyz.efi"}, {9, "netboot.xyz.efi"}, {11, "netboot.xyz-arm64.efi"},
+		} {
+			ctx := context.Background()
+			store, cfg := testStoreAndSettings(t, ctx)
+			if !proxy {
+				cfg.DHCP.Mode = "dhcp"
+			}
+			cfg.BootFiles.BIOS = tc.file
+			cfg.BootFiles.UEFIX64 = tc.file
+			cfg.BootFiles.UEFIARM64 = tc.file
+			for _, msg := range []byte{1, 3} {
+				req := testPXEPacket(msg, testOpt(77, []byte("iPXE")), testOpt(93, []byte{0, tc.arch}))
+				// A configured client may include ciaddr in its second DHCP exchange.
+				if proxy && msg == 3 {
+					copy(req[12:16], net.ParseIP("192.168.1.123").To4())
+				}
+				resp := buildResponse(ctx, cfg, store, observability.NewHub(nil), req, proxy)
+				if len(resp) < 240 {
+					t.Fatal("missing netboot.xyz response")
+				}
+				opts := parseOptions(resp[240:])
+				if net.IP(resp[20:24]).String() != cfg.Server.AdvertiseIP || string(opts[67]) != tc.file+"\x00" || string(opts[60]) != "PXEClient" {
+					t.Fatalf("missing boot metadata: %v", opts)
+				}
+				if responseMessageType(resp) != map[byte]byte{1: 2, 3: 5}[msg] {
+					t.Fatal("wrong response type")
+				}
+				if proxy {
+					if !net.IP(resp[16:20]).IsUnspecified() || len(opts[51]) != 0 || len(opts[1]) != 0 {
+						t.Fatal("proxy assigned network configuration")
+					}
+				} else if net.IP(resp[16:20]).IsUnspecified() || len(opts[51]) != 4 {
+					t.Fatal("missing lease")
+				}
+			}
+		}
+	}
+}
+
+func TestCustomFirmwareDoesNotEnableNetbootMetadata(t *testing.T) {
+	for _, name := range []string{"ipxe-x86_64.efi", "custom.efi", "netboot.xyz-custom.efi", "sub/netboot.xyz.efi", ""} {
+		if isNetbootXYZ(name) {
+			t.Fatalf("unsafe netboot.xyz match: %s", name)
+		}
+	}
+}
