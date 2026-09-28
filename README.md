@@ -61,8 +61,8 @@ docker run -d \
 
 ## 界面预览
 
-![1](docs/images/demo01.png)
+![1](docs/images/demo1.png)
 
 ---
 
-![2](docs/images/demo02.png)
+![2](docs/images/demo2.png)
