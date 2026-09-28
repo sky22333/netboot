@@ -33,12 +33,10 @@ type DHCPSettings struct {
 type TFTPSettings struct {
 	Enabled        bool   `json:"enabled"`
 	Root           string `json:"root"`
-	AllowUpload    bool   `json:"allow_upload"`
 	MaxTransfers   int    `json:"max_transfers"`
 	BlockSizeMax   int    `json:"block_size_max"`
 	RetryCount     int    `json:"retry_count"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
-	MaxUploadBytes int64  `json:"max_upload_bytes"`
 }
 
 type HTTPBootSettings struct {
@@ -78,8 +76,6 @@ type Client struct {
 	MAC        string `json:"mac"`
 	Firmware   string `json:"firmware"`
 	Status     string `json:"status"`
-	DiskHealth string `json:"disk_health"`
-	NetSpeed   string `json:"net_speed"`
 	CreatedAt  string `json:"created_at"`
 	UpdatedAt  string `json:"updated_at"`
 }
@@ -94,12 +90,11 @@ type User struct {
 }
 
 type Event struct {
-	ID         int64  `json:"id"`
-	TS         string `json:"ts"`
-	Level      string `json:"level"`
-	Source     string `json:"source"`
-	Message    string `json:"message"`
-	FieldsJSON string `json:"fields_json"`
+	ID      int64  `json:"id"`
+	Time    string `json:"time"`
+	Level   string `json:"level"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
 }
 
 func Now() string {

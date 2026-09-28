@@ -7,7 +7,6 @@ import (
 	"net"
 	"time"
 
-	"pxe/internal/netutil"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
 )
@@ -42,74 +41,23 @@ func Serve(ctx context.Context, settings storage.ServiceSettings, store *storage
 		if len(resp) == 0 {
 			continue
 		}
-		sendResponse(conn, remote, req, resp, settings, name, port, proxy, events)
+		sendResponse(conn, remote, req, resp, name, port, proxy, events)
 	}
 }
 
-func sendResponse(conn net.PacketConn, remote net.Addr, req, resp []byte, settings storage.ServiceSettings, name, port string, proxy bool, events *observability.Hub) {
-	targets := make([]net.Addr, 0, 4)
-	if !proxy || port == "67" {
-		targets = append(targets, responseBroadcastTargets(settings)...)
-	}
-	if candidate := clientResponseAddr(req); candidate != nil {
-		targets = append(targets, candidate)
-	}
-	if proxy && validResponseAddr(remote) {
-		targets = append(targets, remote)
-	}
-	if len(targets) == 0 && validResponseAddr(remote) {
-		targets = append(targets, remote)
-	}
-	seen := map[string]bool{}
-	for _, target := range targets {
-		if target == nil {
-			continue
-		}
-		key := target.String()
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		n, err := conn.WriteTo(resp, target)
-		if err != nil {
-			events.Publish("error", "dhcp", fmt.Sprintf("%s 响应发送失败: msg=%d target=%s size=%d error=%s", name, responseMessageType(resp), key, len(resp), err.Error()))
-			continue
-		}
-		events.Publish("info", "dhcp", fmt.Sprintf("%s 响应已发送: msg=%d target=%s bytes=%d", name, responseMessageType(resp), key, n))
-	}
-}
-
-func responseBroadcastTargets(settings storage.ServiceSettings) []net.Addr {
-	out := make([]net.Addr, 0, 2)
-	if addr, err := net.ResolveUDPAddr("udp4", "255.255.255.255:68"); err == nil {
-		out = append(out, addr)
-	}
-	if directed := directedBroadcast(settings.Server.AdvertiseIP, settings.DHCP.SubnetMask); directed != "" && directed != "255.255.255.255" {
-		if addr, err := net.ResolveUDPAddr("udp4", directed+":68"); err == nil {
-			out = append(out, addr)
+func sendResponse(conn net.PacketConn, remote net.Addr, req, resp []byte, name, port string, proxy bool, events *observability.Hub) {
+	// This server serves one local subnet; relayed requests are rejected in buildResponse.
+	target := net.Addr(&net.UDPAddr{IP: net.IPv4bcast, Port: 68})
+	if proxy && port == "4011" && validResponseAddr(remote) {
+		target = remote
+	} else if responseMessageType(resp) != 6 && len(req) >= 240 {
+		if ip := net.IP(req[12:16]); !ip.IsUnspecified() {
+			target = &net.UDPAddr{IP: ip, Port: 68}
 		}
 	}
-	return out
-}
-
-func directedBroadcast(ipText, maskText string) string {
-	return netutil.DirectedBroadcast(ipText, maskText)
-}
-
-func clientResponseAddr(req []byte) net.Addr {
-	if len(req) < 240 {
-		return nil
+	if _, err := conn.WriteTo(resp, target); err != nil {
+		events.Publish("error", "dhcp", fmt.Sprintf("%s 响应发送失败: target=%s error=%s", name, target, err))
 	}
-	ip := net.IP(req[12:16]).To4()
-	if ip == nil || ip.Equal(net.IPv4zero) {
-		if requested := parseOptions(req[240:])[50]; len(requested) == 4 {
-			ip = net.IP(requested).To4()
-		}
-	}
-	if ip == nil || ip.Equal(net.IPv4zero) {
-		return nil
-	}
-	return &net.UDPAddr{IP: ip, Port: 68}
 }
 
 func validResponseAddr(addr net.Addr) bool {
@@ -132,6 +80,9 @@ func responseMessageType(resp []byte) byte {
 
 func buildResponse(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, req []byte, proxy bool) []byte {
 	if len(req) < 240 || req[0] != 1 || req[1] != 1 || req[2] != 6 || string(req[236:240]) != magicCookie {
+		return nil
+	}
+	if !net.IP(req[24:28]).IsUnspecified() {
 		return nil
 	}
 	opts := parseOptions(req[240:])
@@ -193,10 +144,10 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 		if proxy || settings.DHCP.Mode != "dhcp" {
 			return nil
 		}
-		if err := store.UpsertClientSeen(ctx, mac, clientIP, "dhcp", "online"); err != nil {
+		if err := store.UpsertClientSeen(ctx, mac, clientIP, "dhcp", "dhcp"); err != nil {
 			events.Publish("error", "dhcp", "记录客户端失败: "+err.Error())
 		}
-		_ = store.AddEvent(ctx, "info", "dhcp", "普通 DHCP 客户端获取网络参数", map[string]any{"mac": mac, "ip": clientIP, "vendor": vendorClass, "msg_type": msgType})
+
 		events.Publish("info", "dhcp", fmt.Sprintf("向普通 DHCP 客户端 %s 分配网络参数: ip=%s vendor=%q", mac, clientIP, vendorClass))
 		return offerNetworkConfig(req, settings, clientIP)
 	}
@@ -207,7 +158,7 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 	if err := store.UpsertClientSeen(ctx, mac, clientIP, arch, status); err != nil {
 		events.Publish("error", "dhcp", "记录客户端失败: "+err.Error())
 	}
-	_ = store.AddEvent(ctx, "info", "dhcp", "收到客户端请求", map[string]any{"mac": mac, "arch": arch, "ipxe": isIPXE, "vendor": vendorClass, "user_class": userClass, "msg_type": msgType, "proxy": proxy})
+
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
 	if isIPXE {
@@ -269,7 +220,7 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	resp := make([]byte, 0, 548)
 	resp = append(resp, 2, 1, 6, 0)
 	resp = append(resp, req[4:8]...)
-	resp = append(resp, 0, 0, 0x80, 0)
+	resp = append(resp, 0, 0, req[10], req[11])
 	resp = append(resp, req[12:16]...)
 	resp = append(resp, yi...)
 	resp = append(resp, nextServerIP...)
@@ -336,7 +287,7 @@ func nak(req []byte, settings storage.ServiceSettings, message string) []byte {
 	resp := make([]byte, 0, 548)
 	resp = append(resp, 2, 1, 6, 0)
 	resp = append(resp, req[4:8]...)
-	resp = append(resp, 0, 0, 0x80, 0)
+	resp = append(resp, 0, 0, req[10], req[11])
 	resp = append(resp, req[12:16]...)
 	resp = append(resp, make([]byte, 4)...)
 	resp = append(resp, serverIP...)

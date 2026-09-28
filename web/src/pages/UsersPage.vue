@@ -5,7 +5,7 @@
       class="h-16 w-full"
       aria-label="正在加载"
     />
-    <Card class="p-6">
+    <div>
       <div>
         <h1 class="text-lg font-semibold">账号管理</h1>
         <p class="mt-1 text-sm text-muted-foreground">
@@ -47,7 +47,7 @@
         用户名需为 3-32 位，仅支持字母、数字、点、下划线、短横线和 @。
       </p>
       <Feedback :message="message" :error="error" />
-    </Card>
+    </div>
 
     <Card class="p-6">
       <div class="flex items-center justify-between gap-3">
@@ -58,11 +58,11 @@
           </p>
         </div>
       </div>
-      <div class="mt-4 overflow-hidden rounded-md border border-border">
+      <div class="mt-4 overflow-hidden">
         <div
           v-for="u in users"
           :key="u.id"
-          class="grid gap-3 border-b border-border/60 p-3 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_8rem_9rem] sm:items-center"
+          class="grid gap-3 border-b border-border/60 p-3 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_8rem_13rem] sm:items-center"
         >
           <div class="min-w-0">
             <div class="truncate font-medium" :title="u.username">
@@ -75,7 +75,16 @@
           <div class="text-muted-foreground">
             {{ u.role === "admin" ? "管理员" : u.role }}
           </div>
-          <div class="flex justify-start sm:justify-end">
+          <div class="flex gap-2 justify-start sm:justify-end">
+            <Button
+              variant="outline"
+              @click="
+                passwordUser = u;
+                nextPassword = '';
+                passwordError = '';
+              "
+              >修改密码</Button
+            >
             <Button
               variant="destructive"
               :disabled="isDefaultAdmin(u) || deletingId === u.id"
@@ -99,10 +108,70 @@
         </div>
       </div>
     </Card>
+    <Dialog
+      :open="!!passwordUser"
+      @update:open="
+        (open) => {
+          if (!open && !changingPassword) passwordUser = null;
+        }
+      "
+    >
+      <DialogContent
+        :show-close-button="!changingPassword"
+        @interact-outside="
+          (event) => {
+            if (changingPassword) event.preventDefault();
+          }
+        "
+        @escape-key-down="
+          (event) => {
+            if (changingPassword) event.preventDefault();
+          }
+        "
+      >
+        <DialogHeader
+          ><DialogTitle>修改密码</DialogTitle
+          ><DialogDescription
+            >{{ passwordUser?.username }} ·
+            修改后该账号需重新登录。</DialogDescription
+          ></DialogHeader
+        >
+        <form class="space-y-4" @submit.prevent="changePassword">
+          <div class="space-y-2">
+            <Label for="new-password">新密码</Label
+            ><Input
+              id="new-password"
+              v-model="nextPassword"
+              type="password"
+              autocomplete="new-password"
+              :disabled="changingPassword"
+              minlength="8"
+              required
+            />
+          </div>
+          <Feedback :message="passwordError" :error="true" />
+          <DialogFooter
+            ><Button
+              type="submit"
+              :disabled="changingPassword || nextPassword.length < 8"
+              >{{ changingPassword ? "保存中..." : "保存密码" }}</Button
+            ></DialogFooter
+          >
+        </form>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePageRefresh } from "@/lib/pageRefresh";
 import { Label } from "@/components/ui/label";
@@ -123,6 +192,41 @@ type User = {
 };
 
 const users = ref<User[]>([]);
+const passwordUser = ref<User | null>(null);
+const nextPassword = ref("");
+const changingPassword = ref(false);
+const passwordError = ref("");
+
+async function changePassword() {
+  if (
+    !passwordUser.value ||
+    changingPassword.value ||
+    nextPassword.value.length < 8
+  )
+    return;
+  changingPassword.value = true;
+  passwordError.value = "";
+  try {
+    const result = await api<{ reauthenticate: boolean }>(
+      `/users/${passwordUser.value.id}/password`,
+      {
+        method: "POST",
+        body: JSON.stringify({ password: nextPassword.value }),
+      },
+    );
+    passwordUser.value = null;
+    nextPassword.value = "";
+    message.value = "密码已修改";
+    error.value = false;
+    if (result.reauthenticate)
+      window.dispatchEvent(new Event("pxe-auth-expired"));
+  } catch (e) {
+    passwordError.value = e instanceof Error ? e.message : "修改失败";
+  } finally {
+    changingPassword.value = false;
+  }
+}
+
 const username = ref("");
 const password = ref("");
 const loading = ref(false);

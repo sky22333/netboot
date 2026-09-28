@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -62,11 +63,11 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires INTEGER NOT NULL);`,
-		`CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY, seq INTEGER NOT NULL, name TEXT NOT NULL, ip TEXT, observed_ip TEXT, mac TEXT, firmware TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL DEFAULT 'unknown', disk_health TEXT, net_speed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY, seq INTEGER NOT NULL, name TEXT NOT NULL, ip TEXT, observed_ip TEXT, mac TEXT, firmware TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL DEFAULT 'unknown', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_ip ON clients(ip) WHERE ip IS NOT NULL AND ip != '';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_mac ON clients(mac) WHERE mac IS NOT NULL AND mac != '';`,
 		`CREATE TABLE IF NOT EXISTS leases (mac TEXT PRIMARY KEY, ip TEXT UNIQUE NOT NULL, expires INTEGER NOT NULL, confirmed INTEGER NOT NULL);`,
-		`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL, fields_json TEXT);`,
+		`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, time TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -93,7 +94,7 @@ func (s *Store) DefaultSettings() ServiceSettings {
 	return ServiceSettings{
 		Server:     ServerSettings{ListenIP: "0.0.0.0", AdvertiseIP: advertiseIP},
 		DHCP:       DHCPSettings{Enabled: true, Mode: "proxy", NonPXEAction: "network_only", PoolStart: prefix + ".200", PoolEnd: prefix + ".250", SubnetMask: "255.255.255.0", Router: prefix + ".1", DNS: []string{prefix + ".1"}, LeaseTimeSeconds: 86400, DetectConflicts: true},
-		TFTP:       TFTPSettings{Enabled: true, Root: filepath.Join(s.dataDir, "boot", "tftp"), AllowUpload: false, MaxTransfers: 64, BlockSizeMax: 1428, RetryCount: 5, TimeoutSeconds: 3, MaxUploadBytes: 256 * 1024 * 1024},
+		TFTP:       TFTPSettings{Enabled: true, Root: filepath.Join(s.dataDir, "boot", "tftp"), MaxTransfers: 64, BlockSizeMax: 1428, RetryCount: 5, TimeoutSeconds: 3},
 		HTTPBoot:   HTTPBootSettings{Enabled: true, Addr: ":80", Root: filepath.Join(s.dataDir, "boot", "http"), DirectoryListing: true, RangeRequests: true},
 		SMB:        SMBSettings{Enabled: false, Root: filepath.Join(s.dataDir, "smb"), ShareName: "pxe", Permissions: "read"},
 		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi"},
@@ -165,6 +166,9 @@ func (s *Store) SaveSettings(ctx context.Context, settings ServiceSettings) erro
 }
 
 func ValidateSettings(settings ServiceSettings) error {
+	if settings.SMB.Enabled && runtime.GOOS != "windows" {
+		return fmt.Errorf("SMB 自动管理仅支持 Windows，请使用系统 Samba")
+	}
 	if net.ParseIP(settings.Server.ListenIP).To4() == nil {
 		return fmt.Errorf("server.listen_ip 无效")
 	}
@@ -188,9 +192,6 @@ func ValidateSettings(settings ServiceSettings) error {
 	}
 	if settings.TFTP.TimeoutSeconds < 1 || settings.TFTP.TimeoutSeconds > 60 {
 		return fmt.Errorf("tftp.timeout_seconds 必须在 1 到 60 之间")
-	}
-	if settings.TFTP.MaxUploadBytes < 0 {
-		return fmt.Errorf("tftp.max_upload_bytes 不能小于 0")
 	}
 	host, port, err := net.SplitHostPort(settings.HTTPBoot.Addr)
 	n, portErr := strconv.Atoi(port)
@@ -273,7 +274,7 @@ func binaryBig(ip net.IP) uint32 {
 }
 
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(observed_ip,''),COALESCE(mac,''),firmware,status,COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients ORDER BY seq DESC,id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(observed_ip,''),COALESCE(mac,''),firmware,status,created_at,updated_at FROM clients ORDER BY seq DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +282,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	out := []Client{}
 	for rows.Next() {
 		var c Client
-		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.ObservedIP, &c.MAC, &c.Firmware, &c.Status, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.ObservedIP, &c.MAC, &c.Firmware, &c.Status, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -291,8 +292,8 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 
 func (s *Store) GetClient(ctx context.Context, id int64) (Client, error) {
 	var c Client
-	err := s.db.QueryRowContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(observed_ip,''),COALESCE(mac,''),firmware,status,COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients WHERE id=?`, id).
-		Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.ObservedIP, &c.MAC, &c.Firmware, &c.Status, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(observed_ip,''),COALESCE(mac,''),firmware,status,created_at,updated_at FROM clients WHERE id=?`, id).
+		Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.ObservedIP, &c.MAC, &c.Firmware, &c.Status, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
 
@@ -324,6 +325,22 @@ func usableIPv4(ip string) bool {
 }
 
 func (s *Store) UpsertClient(ctx context.Context, c Client) (Client, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Client{}, err
+	}
+	defer tx.Rollback()
+	c, err = upsertClient(ctx, tx, c)
+	if err != nil {
+		return Client{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Client{}, err
+	}
+	return s.GetClient(ctx, c.ID)
+}
+
+func upsertClient(ctx context.Context, tx *sql.Tx, c Client) (Client, error) {
 	c.MAC = NormalizeMAC(strings.TrimSpace(c.MAC))
 	c.IP = strings.TrimSpace(c.IP)
 	if c.MAC != "" && !validMAC(c.MAC) {
@@ -332,11 +349,7 @@ func (s *Store) UpsertClient(ctx context.Context, c Client) (Client, error) {
 	if c.IP != "" && !usableIPv4(c.IP) {
 		return Client{}, fmt.Errorf("静态 IPv4 地址无效")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Client{}, err
-	}
-	defer tx.Rollback()
+	var err error
 	var conflict int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM leases WHERE ip=? AND mac!=? AND expires>unixepoch()`, c.IP, c.MAC).Scan(&conflict); err != nil {
 		return Client{}, err
@@ -368,10 +381,7 @@ func (s *Store) UpsertClient(ctx context.Context, c Client) (Client, error) {
 	if err != nil {
 		return Client{}, err
 	}
-	if err = tx.Commit(); err != nil {
-		return Client{}, err
-	}
-	return s.GetClient(ctx, c.ID)
+	return c, nil
 }
 
 func (s *Store) BatchCreateClients(ctx context.Context, prefix, ipStart string, count int) ([]Client, error) {
@@ -382,16 +392,27 @@ func (s *Store) BatchCreateClients(ctx context.Context, prefix, ipStart string, 
 	if start == nil {
 		return nil, fmt.Errorf("起始 IP 无效")
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 	base := binaryBig(start)
+	if uint64(base)+uint64(count)-1 > 0xffffffff {
+		return nil, fmt.Errorf("地址范围溢出")
+	}
 	out := make([]Client, 0, count)
 	for i := 0; i < count; i++ {
 		ip := make(net.IP, 4)
 		putBinary(ip, base+uint32(i))
-		c, err := s.UpsertClient(ctx, Client{Name: fmt.Sprintf("%s%03d", prefix, i+1), IP: ip.String(), MAC: "", Firmware: "unknown", Status: "unassigned"})
+		c, err := upsertClient(ctx, tx, Client{Name: fmt.Sprintf("%s%03d", prefix, i+1), IP: ip.String()})
 		if err != nil {
-			return out, err
+			return nil, err
 		}
 		out = append(out, c)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -405,11 +426,6 @@ func putBinary(ip net.IP, v uint32) {
 
 func (s *Store) ClearClientMAC(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE clients SET mac=NULL,status='unassigned',updated_at=? WHERE id=?`, Now(), id)
-	return err
-}
-
-func (s *Store) UpdateClientHealth(ctx context.Context, ip string, diskHealth, netSpeed string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE clients SET disk_health=?,net_speed=?,status='online',updated_at=? WHERE observed_ip=?`, diskHealth, netSpeed, Now(), ip)
 	return err
 }
 
@@ -474,24 +490,31 @@ func nullEmpty(s string) any {
 	return s
 }
 
-func (s *Store) AddEvent(ctx context.Context, level, source, message string, fields any) error {
-	raw := ""
-	if fields != nil {
-		b, _ := json.Marshal(fields)
-		raw = string(b)
+func (s *Store) RecordEvent(e Event) (Event, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return e, err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO events(ts,level,source,message,fields_json) VALUES(?,?,?,?,?)`, Now(), level, source, message, raw)
-	if err == nil {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 5000)`)
+	defer tx.Rollback()
+	res, err := tx.Exec(`INSERT INTO events(time,level,source,message) VALUES(?,?,?,?)`, e.Time, e.Level, e.Source, e.Message)
+	if err != nil {
+		return e, err
 	}
-	return err
+	e.ID, err = res.LastInsertId()
+	if err != nil {
+		return e, err
+	}
+	if _, err = tx.Exec(`DELETE FROM events WHERE id<=?`, e.ID-5000); err != nil {
+		return e, err
+	}
+	return e, tx.Commit()
 }
 
 func (s *Store) RecentEvents(ctx context.Context, limit int) ([]Event, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,ts,level,source,message,COALESCE(fields_json,'') FROM (SELECT id,ts,level,source,message,fields_json FROM events ORDER BY id DESC LIMIT ?) ORDER BY id ASC`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,time,level,source,message FROM (SELECT id,time,level,source,message FROM events ORDER BY id DESC LIMIT ?) ORDER BY id ASC`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +522,7 @@ func (s *Store) RecentEvents(ctx context.Context, limit int) ([]Event, error) {
 	out := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.TS, &e.Level, &e.Source, &e.Message, &e.FieldsJSON); err != nil {
+		if err := rows.Scan(&e.ID, &e.Time, &e.Level, &e.Source, &e.Message); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -68,14 +70,11 @@ func NewRouter(app Backend) http.Handler {
 	protected.GET("/diagnostics/dhcp", h.dhcpDiagnostics)
 	protected.GET("/config", h.getConfig)
 	protected.PUT("/config", h.saveConfig)
-	protected.POST("/config/validate", h.validateConfig)
 	protected.POST("/services/start", h.startServices)
 	protected.POST("/services/stop", h.stopServices)
-	protected.POST("/services/restart", h.restartServices)
 	protected.GET("/clients", h.listClients)
 	protected.POST("/clients", h.saveClient)
 	protected.POST("/clients/batch", h.batchClients)
-	protected.POST("/clients/report", h.clientReport)
 	protected.PUT("/clients/:id", h.saveClient)
 	protected.DELETE("/clients/:id", h.deleteClient)
 	protected.POST("/clients/:id/wol", h.wol)
@@ -187,13 +186,14 @@ func (h *Handler) diagnostics(c *gin.Context) {
 	boot := h.app.BootConfig()
 	permission := platform.Permission()
 	OK(c, gin.H{
-		"data_dir":    boot.Data.Dir,
-		"db":          boot.Database.Path,
-		"admin_addr":  boot.Admin.AdminAddr,
-		"is_admin":    permission.AdminLike,
-		"permission":  permission,
-		"interfaces":  platform.Interfaces(),
-		"suggestions": []string{"若客户端无法获取启动文件，请确认程序已被系统防火墙放行，并且监听 IP、通告 IP 与客户端处于可达网络。"},
+		"data_dir":      boot.Data.Dir,
+		"db":            boot.Database.Path,
+		"admin_addr":    boot.Admin.AdminAddr,
+		"smb_supported": runtime.GOOS == "windows",
+		"is_admin":      permission.AdminLike,
+		"permission":    permission,
+		"interfaces":    platform.Interfaces(),
+		"suggestions":   []string{"若客户端无法获取启动文件，请确认程序已被系统防火墙放行，并且监听 IP、通告 IP 与客户端处于可达网络。"},
 	})
 }
 
@@ -243,19 +243,6 @@ func (h *Handler) getConfig(c *gin.Context) {
 	OK(c, settings)
 }
 
-func (h *Handler) validateConfig(c *gin.Context) {
-	var settings storage.ServiceSettings
-	if err := c.ShouldBindJSON(&settings); err != nil {
-		Fail(c, 400, "CONFIG_INVALID", "配置格式错误")
-		return
-	}
-	if err := storage.ValidateSettings(settings); err != nil {
-		Fail(c, 400, "CONFIG_INVALID", err.Error())
-		return
-	}
-	OK(c, gin.H{"valid": true})
-}
-
 func (h *Handler) saveConfig(c *gin.Context) {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -277,7 +264,7 @@ func (h *Handler) saveConfig(c *gin.Context) {
 		return
 	}
 	h.app.EventHub().Publish("info", "config", "服务配置已保存")
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "config", "服务配置已保存", nil)
+
 	OK(c, saved)
 }
 
@@ -299,8 +286,6 @@ func (h *Handler) stopServices(c *gin.Context) {
 	OK(c, h.app.Status())
 }
 
-func (h *Handler) restartServices(c *gin.Context) { h.startServices(c) }
-
 func (h *Handler) listClients(c *gin.Context) {
 	clients, err := h.app.Storage().ListClients(c.Request.Context())
 	if err != nil {
@@ -316,8 +301,13 @@ func (h *Handler) saveClient(c *gin.Context) {
 		Fail(c, 400, "CLIENT_INVALID", "客户端格式错误")
 		return
 	}
+	client.ID = 0
 	if id := c.Param("id"); id != "" {
-		client.ID, _ = strconv.ParseInt(id, 10, 64)
+		var valid bool
+		client.ID, valid = resourceID(c)
+		if !valid {
+			return
+		}
 	}
 	if client.Name == "" {
 		Fail(c, 400, "CLIENT_INVALID", "客户端名称不能为空")
@@ -332,12 +322,15 @@ func (h *Handler) saveClient(c *gin.Context) {
 }
 
 func (h *Handler) deleteClient(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, valid := resourceID(c)
+	if !valid {
+		return
+	}
 	if err := h.app.Storage().DeleteClient(c.Request.Context(), id); err != nil {
 		Fail(c, 500, "CLIENT_DELETE_FAILED", err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "clients", "删除客户端", gin.H{"id": id})
+	h.app.EventHub().Publish("warning", "clients", fmt.Sprintf("删除设备: %d", id))
 	OK(c, gin.H{"deleted": id})
 }
 
@@ -359,39 +352,28 @@ func (h *Handler) batchClients(c *gin.Context) {
 		Fail(c, 400, "BATCH_FAILED", err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "clients", "批量添加客户端", gin.H{"count": len(out)})
+	h.app.EventHub().Publish("info", "clients", fmt.Sprintf("批量添加设备: %d 台", len(out)))
 	OK(c, out)
 }
 
 func (h *Handler) clearClientMAC(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, valid := resourceID(c)
+	if !valid {
+		return
+	}
 	if err := h.app.Storage().ClearClientMAC(c.Request.Context(), id); err != nil {
 		Fail(c, 500, "CLIENT_CLEAR_MAC_FAILED", err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "clients", "清除客户端 MAC", gin.H{"id": id})
+	h.app.EventHub().Publish("warning", "clients", fmt.Sprintf("清除 MAC 绑定: %d", id))
 	OK(c, gin.H{"id": id})
 }
 
-func (h *Handler) clientReport(c *gin.Context) {
-	var report struct {
-		IP         string `json:"ip"`
-		DiskHealth string `json:"disk_health"`
-		NetSpeed   string `json:"net_speed"`
-	}
-	if err := c.ShouldBindJSON(&report); err != nil || report.IP == "" {
-		Fail(c, 400, "REPORT_INVALID", "健康报告格式错误")
-		return
-	}
-	if err := h.app.Storage().UpdateClientHealth(c.Request.Context(), report.IP, report.DiskHealth, report.NetSpeed); err != nil {
-		Fail(c, 500, "REPORT_SAVE_FAILED", err.Error())
-		return
-	}
-	OK(c, gin.H{"message": "健康报告已记录"})
-}
-
 func (h *Handler) wol(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, valid := resourceID(c)
+	if !valid {
+		return
+	}
 	client, err := h.app.Storage().GetClient(c.Request.Context(), id)
 	if err != nil {
 		Fail(c, 404, "CLIENT_NOT_FOUND", "客户端不存在")
@@ -443,7 +425,10 @@ func (h *Handler) createUserAPI(c *gin.Context) {
 }
 
 func (h *Handler) changeUserPassword(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, valid := resourceID(c)
+	if !valid {
+		return
+	}
 	var req struct{ Password string }
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.Password) < 8 {
 		Fail(c, 400, "PASSWORD_INVALID", "密码至少 8 位")
@@ -453,13 +438,13 @@ func (h *Handler) changeUserPassword(c *gin.Context) {
 		Fail(c, 500, "PASSWORD_CHANGE_FAILED", err.Error())
 		return
 	}
-	OK(c, gin.H{"message": "密码已修改"})
+	token, _ := c.Cookie("pxe_session")
+	OK(c, gin.H{"reauthenticate": !h.sessionValid(c.Request.Context(), token)})
 }
 
 func (h *Handler) deleteUser(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	if id <= 0 {
-		Fail(c, 400, "USER_INVALID", "用户 ID 无效")
+	id, valid := resourceID(c)
+	if !valid {
 		return
 	}
 	if err := h.app.Storage().DeleteUser(c.Request.Context(), id); err != nil {
@@ -569,11 +554,15 @@ func (h *Handler) renameFile(c *gin.Context) {
 		Fail(c, 400, "PATH_INVALID", "目标路径无效")
 		return
 	}
-	if err := root.Rename(from, to); err != nil {
+	if err := filetree.Rename(root, from, to); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			Fail(c, 409, "FILE_EXISTS", "目标名称已存在")
+			return
+		}
 		Fail(c, 500, "RENAME_FAILED", err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "files", "重命名文件", gin.H{"from": req.From, "to": req.To})
+	h.app.EventHub().Publish("warning", "files", fmt.Sprintf("重命名文件: %s → %s", req.From, req.To))
 	OK(c, gin.H{"from": req.From, "to": req.To})
 }
 
@@ -594,11 +583,11 @@ func (h *Handler) deleteFile(c *gin.Context) {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
 	}
-	if err := root.Remove(target); err != nil {
+	if err := filetree.Remove(root, target); err != nil {
 		Fail(c, 500, "FILE_DELETE_FAILED", err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "files", "删除文件", gin.H{"path": c.Query("path")})
+	h.app.EventHub().Publish("warning", "files", "删除文件: "+c.Query("path"))
 	OK(c, gin.H{"deleted": c.Query("path")})
 }
 
@@ -657,7 +646,7 @@ func (h *Handler) getFileContent(c *gin.Context) {
 		Fail(c, 400, "FILE_NOT_TEXT", "文件不是 UTF-8 文本")
 		return
 	}
-	OK(c, gin.H{"root": rootType, "path": rel, "content": string(data), "size": info.Size(), "mod_time": info.ModTime()})
+	OK(c, gin.H{"root": rootType, "path": rel, "content": string(data), "revision": filetree.Revision(data), "size": info.Size(), "mod_time": info.ModTime()})
 }
 
 func (h *Handler) saveFileContent(c *gin.Context) {
@@ -667,9 +656,10 @@ func (h *Handler) saveFileContent(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Root    string `json:"root"`
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Root     string `json:"root"`
+		Path     string `json:"path"`
+		Content  string `json:"content"`
+		Revision string `json:"revision"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Path == "" {
 		Fail(c, 400, "FILE_CONTENT_INVALID", "文件内容参数错误")
@@ -702,12 +692,16 @@ func (h *Handler) saveFileContent(c *gin.Context) {
 		Fail(c, 400, "FILE_IS_DIRECTORY", "目录不能在线编辑")
 		return
 	}
-	if err := root.WriteFile(target, []byte(req.Content), 0644); err != nil {
+	if err := filetree.WriteText(c.Request.Context(), root, target, req.Content, req.Revision); err != nil {
+		if errors.Is(err, filetree.ErrConflict) {
+			Fail(c, 409, "FILE_CONFLICT", err.Error())
+			return
+		}
 		Fail(c, 500, "FILE_WRITE_FAILED", err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "files", "保存文本文件", gin.H{"path": req.Path, "root": req.Root})
-	OK(c, gin.H{"path": req.Path, "size": len(req.Content)})
+	h.app.EventHub().Publish("warning", "files", fmt.Sprintf("保存文本文件: %s/%s", req.Root, req.Path))
+	OK(c, gin.H{"path": req.Path, "size": len(req.Content), "revision": filetree.Revision([]byte(req.Content))})
 }
 
 func (h *Handler) logs(c *gin.Context) {
@@ -718,8 +712,8 @@ func (h *Handler) logs(c *gin.Context) {
 		}
 	}
 	events, err := h.app.Storage().RecentEvents(c.Request.Context(), limit)
-	if err != nil || len(events) == 0 {
-		OK(c, h.app.EventHub().Recent())
+	if err != nil {
+		Fail(c, 500, "LOG_READ_FAILED", "日志读取失败")
 		return
 	}
 	OK(c, events)
@@ -895,4 +889,13 @@ func staticHandler() gin.HandlerFunc {
 		}
 		c.Data(http.StatusOK, ct, data)
 	}
+}
+
+func resourceID(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		Fail(c, 400, "ID_INVALID", "ID 必须是正整数")
+		return 0, false
+	}
+	return id, true
 }

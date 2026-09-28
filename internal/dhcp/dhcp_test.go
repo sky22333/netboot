@@ -19,7 +19,7 @@ func TestProxyDiscoverReturnsOffer(t *testing.T) {
 		testOpt(93, []byte{0, 7}),
 	)
 
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, true)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(nil), req, true)
 	if got := responseMessageType(resp); got != 2 {
 		t.Fatalf("expected proxy discover to return offer, got message type %d", got)
 	}
@@ -34,7 +34,7 @@ func TestIPXEClientSeenStatus(t *testing.T) {
 		testOpt(93, []byte{0, 7}),
 	)
 
-	buildResponse(ctx, settings, store, observability.NewHub(), req, true)
+	buildResponse(ctx, settings, store, observability.NewHub(nil), req, true)
 	clients, err := store.ListClients(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestCompleteDHCPUEFIDirectBoot(t *testing.T) {
 		testOpt(93, []byte{0, 7}),
 	)
 
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(nil), req, false)
 	opts := parseOptions(resp[240:])
 	if got := string(opts[67]); got != "ipxe-x86_64.efi\x00" {
 		t.Fatalf("expected direct UEFI boot file, got %q", got)
@@ -78,7 +78,7 @@ func TestCompleteDHCPLeaseOfferThenAckKeepsSameIP(t *testing.T) {
 	settings.DHCP.DNS = []string{"192.168.1.1"}
 
 	discover := testPXEPacket(1, testOpt(60, []byte("PXEClient")), testOpt(93, []byte{0, 0}))
-	offer := buildResponse(ctx, settings, store, observability.NewHub(), discover, false)
+	offer := buildResponse(ctx, settings, store, observability.NewHub(nil), discover, false)
 	if got := responseMessageType(offer); got != 2 {
 		t.Fatalf("expected offer, got message type %d", got)
 	}
@@ -88,7 +88,7 @@ func TestCompleteDHCPLeaseOfferThenAckKeepsSameIP(t *testing.T) {
 	}
 
 	request := testPXEPacket(3, testOpt(60, []byte("PXEClient")), testOpt(93, []byte{0, 0}), testOpt(50, net.ParseIP(offeredIP).To4()))
-	ack := buildResponse(ctx, settings, store, observability.NewHub(), request, false)
+	ack := buildResponse(ctx, settings, store, observability.NewHub(nil), request, false)
 	if got := responseMessageType(ack); got != 5 {
 		t.Fatalf("expected ack, got message type %d", got)
 	}
@@ -110,7 +110,7 @@ func TestCompleteDHCPLeasePoolSkipsReservedClientIPs(t *testing.T) {
 	}
 
 	req := testPXEPacket(1, testOpt(60, []byte("PXEClient")), testOpt(93, []byte{0, 0}))
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(nil), req, false)
 	if got := net.IP(resp[16:20]).String(); got != "192.168.1.201" {
 		t.Fatalf("expected pool to skip reserved IP, got %s", got)
 	}
@@ -126,7 +126,7 @@ func TestCompleteDHCPNonPXEClientGetsNetworkOnlyConfig(t *testing.T) {
 	settings.DHCP.DNS = []string{"192.168.1.1"}
 
 	req := testPXEPacket(1)
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(nil), req, false)
 	opts := parseOptions(resp[240:])
 	if len(opts[67]) != 0 || len(opts[60]) != 0 {
 		t.Fatalf("expected network-only response without PXE options, got option60=%q option67=%q", opts[60], opts[67])
@@ -144,7 +144,7 @@ func TestCompleteDHCPNonPXEIgnoreReturnsNoResponse(t *testing.T) {
 	settings.DHCP.PoolStart = "192.168.1.210"
 	settings.DHCP.PoolEnd = "192.168.1.210"
 
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), testPXEPacket(1), false)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(nil), testPXEPacket(1), false)
 	if len(resp) != 0 {
 		t.Fatalf("expected no response for ignored non-PXE client, got %d bytes", len(resp))
 	}
@@ -156,7 +156,7 @@ func TestCompleteDHCPRequestForOtherServerIsIgnored(t *testing.T) {
 	settings.DHCP.Mode = "dhcp"
 
 	req := testPXEPacket(3, testOpt(54, net.ParseIP("192.168.1.99").To4()), testOpt(50, net.ParseIP("192.168.1.20").To4()))
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, false)
+	resp := buildResponse(ctx, settings, store, observability.NewHub(nil), req, false)
 	if len(resp) != 0 {
 		t.Fatalf("expected request for another DHCP server to be ignored, got %d bytes", len(resp))
 	}
@@ -263,7 +263,7 @@ func TestProxyCannotOverwriteStaticBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	buildResponse(ctx, cfg, store, observability.NewHub(), req, true)
+	buildResponse(ctx, cfg, store, observability.NewHub(nil), req, true)
 	got, err := store.GetClient(ctx, c.ID)
 	if err != nil || got.IP != c.IP || got.ObservedIP != "" {
 		t.Fatalf("binding overwritten: %+v %v", got, err)
@@ -281,7 +281,7 @@ func TestIPXEOnlyReceivesNetworkConfiguration(t *testing.T) {
 				}
 				for _, msg := range []byte{1, 3} {
 					req := testPXEPacket(msg, marker)
-					resp := buildResponse(ctx, cfg, store, observability.NewHub(), req, proxy)
+					resp := buildResponse(ctx, cfg, store, observability.NewHub(nil), req, proxy)
 					if proxy {
 						if len(resp) != 0 {
 							t.Fatal("proxy advertised a second-stage target")
@@ -316,5 +316,43 @@ func TestIPXEOnlyReceivesNetworkConfiguration(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+type responseRecorder struct {
+	net.PacketConn
+	targets []string
+}
+
+func (r *responseRecorder) WriteTo(p []byte, target net.Addr) (int, error) {
+	r.targets = append(r.targets, target.String())
+	return len(p), nil
+}
+func TestResponseHasOneDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name, ip, port, want string
+		proxy                bool
+		message              byte
+	}{
+		{"discover", "0.0.0.0", "67", "255.255.255.255:68", false, 2},
+		{"renew", "192.168.1.20", "67", "192.168.1.20:68", false, 5},
+		{"nak", "192.168.1.20", "67", "255.255.255.255:68", false, 6},
+		{"proxy", "192.168.1.20", "4011", "192.168.1.20:4011", true, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := testPXEPacket(1)
+			copy(req[12:16], net.ParseIP(tc.ip).To4())
+			resp := append(make([]byte, 240), 53, 1, tc.message, 255)
+			conn := &responseRecorder{}
+			sendResponse(conn, &net.UDPAddr{IP: net.ParseIP("192.168.1.20"), Port: 4011}, req, resp, "DHCP", tc.port, tc.proxy, observability.NewHub(nil))
+			if len(conn.targets) != 1 || conn.targets[0] != tc.want {
+				t.Fatal(conn.targets)
+			}
+		})
+	}
+	req := testPXEPacket(1)
+	copy(req[24:28], net.ParseIP("192.168.2.1").To4())
+	if buildResponse(context.Background(), storage.ServiceSettings{}, nil, nil, req, false) != nil {
+		t.Fatal("relay request accepted")
 	}
 }

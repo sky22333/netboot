@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pxe/internal/config"
@@ -28,9 +29,10 @@ type Status struct {
 	StartedAt string            `json:"started_at"`
 }
 type serviceHandle struct {
-	cancel context.CancelFunc
-	done   chan struct{}
-	err    error
+	finished atomic.Bool
+	cancel   context.CancelFunc
+	done     chan struct{}
+	err      error
 }
 type App struct {
 	Boot      config.BootConfig
@@ -55,7 +57,9 @@ func New(ctx context.Context, boot config.BootConfig) (*App, error) {
 		return nil, err
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(logger, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	return &App{Boot: boot, Store: store, Events: observability.NewHub(), startedAt: time.Now().Format(time.RFC3339), services: map[string]*serviceHandle{}, applySMB: smb.Apply, logger: logger}, nil
+	return &App{Boot: boot, Store: store, Events: observability.NewHub(store), startedAt: time.Now().Format(time.RFC3339), services: map[string]*serviceHandle{}, applySMB: func(ctx context.Context, settings storage.SMBSettings, start bool) error {
+		return smb.Apply(ctx, settings, start, boot.Data.Dir)
+	}, logger: logger}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -92,12 +96,11 @@ func (a *App) Status() any {
 	defer a.mu.Unlock()
 	states := map[string]string{"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "smb": "stopped"}
 	for name, h := range a.services {
-		select {
-		case <-h.done:
+		if h.finished.Load() {
 			if h.err != nil {
 				states[name] = "failed"
 			}
-		default:
+		} else {
 			states[name] = "running"
 		}
 	}
@@ -113,14 +116,11 @@ func (a *App) BootConfig() config.BootConfig { return a.Boot }
 func (a *App) StartServices(ctx context.Context) (err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err = a.stopLocked(ctx); err != nil {
-		return err
-	}
 	settings, err := a.Store.GetSettings(ctx)
 	if err != nil {
 		return err
 	}
-	if err = storage.ValidateSettings(settings); err != nil {
+	if err = a.stopLocked(ctx); err != nil {
 		return err
 	}
 	defer func() {
@@ -141,7 +141,7 @@ func (a *App) StartServices(ctx context.Context) (err error) {
 		if e != nil {
 			return fmt.Errorf("HTTP Boot 监听失败: %w", e)
 		}
-		server := &http.Server{Handler: httpboot.Handler(settings, a.Store, a.Events), ReadHeaderTimeout: 10 * time.Second}
+		server := &http.Server{Handler: httpboot.Handler(settings, a.Events), ReadHeaderTimeout: 10 * time.Second}
 		a.start("httpboot", func(ctx context.Context) error {
 			stop := context.AfterFunc(ctx, func() { _ = server.Close() })
 			defer stop()
@@ -157,7 +157,7 @@ func (a *App) StartServices(ctx context.Context) (err error) {
 		if e != nil {
 			return fmt.Errorf("TFTP 监听失败: %w", e)
 		}
-		a.start("tftp", func(ctx context.Context) error { return tftp.Serve(ctx, settings, a.Store, a.Events, conn) })
+		a.start("tftp", func(ctx context.Context) error { return tftp.Serve(ctx, settings, a.Events, conn) })
 	}
 	if settings.DHCP.Enabled {
 		if settings.DHCP.Mode == "dhcp" && settings.DHCP.DetectConflicts {
@@ -207,6 +207,7 @@ func (a *App) start(name string, run func(context.Context) error) {
 		defer close(h.done)
 		defer cancel()
 		h.err = run(ctx)
+		h.finished.Store(true)
 		if h.err != nil {
 			a.Events.Publish("error", name, h.err.Error())
 		}
@@ -215,7 +216,11 @@ func (a *App) start(name string, run func(context.Context) error) {
 func (a *App) StopServices(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.stopLocked(ctx)
+	err := a.stopLocked(ctx)
+	if err == nil {
+		a.Events.Publish("info", "services", "服务已停止")
+	}
+	return err
 }
 func (a *App) stopLocked(ctx context.Context) error {
 	for _, h := range a.services {

@@ -49,7 +49,7 @@ func TestLatestDownloadsAndPartialFailure(t *testing.T) {
 		}
 		return resp, nil
 	})}
-	results, err := Download(context.Background(), client, source, "", observability.NewHub())
+	results, err := Download(context.Background(), client, source, "", observability.NewHub(nil))
 	if err != nil || len(results) != 3 || calls != 5 {
 		t.Fatalf("results=%+v calls=%d err=%v", results, calls, err)
 	}
@@ -146,7 +146,7 @@ func TestNetbootDownloadsToTFTPRoot(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("firmware")), ContentLength: 8, Request: r}, nil
 	})}
-	results, err := Download(context.Background(), client, source, "https://boot.netboot.xyz/ipxe", observability.NewHub())
+	results, err := Download(context.Background(), client, source, "https://boot.netboot.xyz/ipxe", observability.NewHub(nil))
 	if err != nil || len(results) != 1 || !results[0].OK {
 		t.Fatalf("%+v %v", results, err)
 	}

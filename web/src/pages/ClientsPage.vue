@@ -60,7 +60,7 @@
     <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <Card class="overflow-hidden">
         <div class="hidden overflow-x-auto md:block">
-          <Table class="w-full min-w-[880px] table-fixed text-sm">
+          <Table class="w-full min-w-[760px] table-fixed text-sm">
             <TableHeader
               class="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground"
             >
@@ -68,12 +68,11 @@
                 <TableHead class="w-[18%] px-4 py-3">名称</TableHead>
                 <TableHead class="w-[16%] px-4 py-3">IP</TableHead>
                 <TableHead class="w-[20%] px-4 py-3">MAC</TableHead>
-                <TableHead class="w-[12%] px-4 py-3">状态</TableHead>
-                <TableHead class="w-[16%] px-4 py-3">健康</TableHead>
+                <TableHead class="w-[12%] px-4 py-3">启动阶段</TableHead>
                 <TableHead class="w-[18%] px-4 py-3 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody class="divide-y divide-neutral-100">
+            <TableBody class="divide-y divide-border">
               <TableRow
                 v-for="client in clients"
                 :key="client.id"
@@ -98,14 +97,9 @@
                   <Badge
                     variant="outline"
                     class="rounded-full border px-2 py-0.5 text-xs"
-                    :class="statusClass(client.status)"
                     >{{ statusText[client.status] ?? client.status }}</Badge
                   >
                 </TableCell>
-                <TableCell class="px-4 py-3 text-muted-foreground"
-                  >{{ client.disk_health || "-" }} /
-                  {{ client.net_speed || "-" }}</TableCell
-                >
                 <TableCell class="px-4 py-3">
                   <div class="flex flex-nowrap justify-end gap-1">
                     <Button
@@ -128,7 +122,7 @@
           </Table>
         </div>
 
-        <div class="divide-y divide-neutral-100 md:hidden">
+        <div class="divide-y divide-border md:hidden">
           <Button
             variant="ghost"
             v-for="client in clients"
@@ -146,7 +140,6 @@
             <Badge
               variant="outline"
               class="rounded-full border px-2 py-0.5 text-xs"
-              :class="statusClass(client.status)"
               >{{ statusText[client.status] ?? client.status }}</Badge
             >
           </Button>
@@ -206,7 +199,7 @@
               固件：{{
                 editing.firmware === "unknown" ? "未知" : editing.firmware
               }}
-              · 状态：{{ statusText[editing.status] ?? editing.status }}
+              · 启动阶段：{{ statusText[editing.status] ?? editing.status }}
             </p>
             <p class="mt-1">观测信息由设备请求自动更新。</p>
           </div>
@@ -272,8 +265,6 @@ type Client = {
   mac: string;
   firmware: string;
   status: string;
-  disk_health: string;
-  net_speed: string;
   created_at: string;
   updated_at: string;
 };
@@ -290,8 +281,7 @@ const error = ref(false);
 const statusText: Record<string, string> = {
   unknown: "未知",
   unassigned: "待绑定",
-  online: "在线",
-  offline: "离线",
+  dhcp: "已获取地址",
   pxe: "PXE",
   ipxe: "iPXE",
 };
@@ -321,8 +311,6 @@ function emptyClient(): Client {
     mac: "",
     firmware: "unknown",
     status: "unknown",
-    disk_health: "",
-    net_speed: "",
     created_at: "",
     updated_at: "",
   };
@@ -446,15 +434,6 @@ async function remove(client: Client) {
     message.value = "设备已删除";
     await fetchClients();
   });
-}
-
-function statusClass(status: string) {
-  if (status === "online") return "border-green-200 bg-green-50 text-green-700";
-  if (status === "pxe" || status === "ipxe")
-    return "border-blue-200 bg-blue-50 text-blue-700";
-  if (status === "unassigned")
-    return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-border bg-muted/40 text-muted-foreground";
 }
 
 usePageRefresh(load);

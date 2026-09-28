@@ -93,7 +93,7 @@ import Feedback from "@/components/Feedback.vue";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { confirmAction } from "@/lib/confirm";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../lib/api";
 import { useEventLog } from "../lib/eventLog";
 
@@ -107,6 +107,18 @@ const labels: Record<string, string> = {
 };
 const status = ref<any>();
 const { recent, connected, load: loadEvents } = useEventLog();
+watch(recent, (rows, previous) => {
+  const lastID = previous.at(-1)?.id ?? 0;
+  if (
+    rows.some(
+      (event) =>
+        event.id > lastID &&
+        (event.source === "services" ||
+          (event.level === "error" && event.source in labels)),
+    )
+  )
+    void load();
+});
 const compactEvents = computed(() => recent.value.slice(-6));
 const busy = ref(false);
 const message = ref("");

@@ -22,7 +22,7 @@ func TestFileHandlerDirectoryListingDisabled(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://pxe.local/", nil)
 	req.RemoteAddr = "192.168.1.50:12345"
 	rec := httptest.NewRecorder()
-	fileHandler(settings, store, observability.NewHub()).ServeHTTP(rec, req)
+	fileHandler(settings, observability.NewHub(store)).ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for disabled directory listing, got %d", rec.Code)
 	}
@@ -40,7 +40,7 @@ func TestFileHandlerDisablesRangeRequests(t *testing.T) {
 	req.Header.Set("Range", "bytes=0-2")
 	req.RemoteAddr = "192.168.1.50:12345"
 	rec := httptest.NewRecorder()
-	fileHandler(settings, store, observability.NewHub()).ServeHTTP(rec, req)
+	fileHandler(settings, observability.NewHub(store)).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected full response when range disabled, got %d", rec.Code)
 	}
@@ -94,37 +94,12 @@ func testSettings(t *testing.T) storage.ServiceSettings {
 	}
 }
 
-func TestHealthReportUsesSenderAndStaticScriptIsServed(t *testing.T) {
-	ctx := context.Background()
-	store, cfg := testStoreAndSettings(t, ctx)
-	if err := store.UpsertClientSeen(ctx, "02:00:00:00:00:01", "192.168.1.50", "bios", "pxe"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpsertClientSeen(ctx, "02:00:00:00:00:02", "192.168.1.51", "bios", "pxe"); err != nil {
-		t.Fatal(err)
-	}
-	handler := Handler(cfg, store, observability.NewHub())
-	req := httptest.NewRequest("POST", "/client/report", strings.NewReader(`{"ip":"192.168.1.51","disk_health":"OK"}`))
-	req.RemoteAddr = "192.168.1.50:23456"
+func TestStaticScriptIsServed(t *testing.T) {
+	store, cfg := testStoreAndSettings(t, context.Background())
+	handler := Handler(cfg, observability.NewHub(store))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != 204 {
-		t.Fatalf("report: %d", rec.Code)
-	}
-	clients, err := store.ListClients(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range clients {
-		if c.ObservedIP == "192.168.1.50" && c.DiskHealth != "OK" {
-			t.Fatal("sender not updated")
-		}
-		if c.ObservedIP == "192.168.1.51" && c.DiskHealth == "OK" {
-			t.Fatal("spoofed IP updated")
-		}
-	}
 	script := "#!ipxe\nexit\n"
-	if err = os.WriteFile(filepath.Join(cfg.HTTPBoot.Root, "boot.ipxe"), []byte(script), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfg.HTTPBoot.Root, "boot.ipxe"), []byte(script), 0644); err != nil {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
@@ -146,8 +121,29 @@ func TestDirectoryNamesEscaped(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	fileHandler(cfg, store, observability.NewHub()).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	fileHandler(cfg, observability.NewHub(store)).ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if !strings.Contains(rec.Body.String(), "a&amp;b.txt") {
 		t.Fatalf("unescaped listing: %s", rec.Body)
+	}
+}
+
+func TestEqualSizeSameSecondEditChangesETag(t *testing.T) {
+	store, cfg := testStoreAndSettings(t, context.Background())
+	file := filepath.Join(cfg.HTTPBoot.Root, "script.ipxe")
+	stamp := time.Unix(1700000000, 100000000)
+	os.WriteFile(file, []byte("old"), 0644)
+	os.Chtimes(file, stamp, stamp)
+	handler := Handler(cfg, observability.NewHub(store))
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest("GET", "/script.ipxe", nil))
+	os.WriteFile(file, []byte("new"), 0644)
+	stamp = stamp.Add(100 * time.Millisecond)
+	os.Chtimes(file, stamp, stamp)
+	req := httptest.NewRequest("GET", "/script.ipxe", nil)
+	req.Header.Set("If-None-Match", first.Header().Get("ETag"))
+	next := httptest.NewRecorder()
+	handler.ServeHTTP(next, req)
+	if next.Code != 200 || next.Body.String() != "new" {
+		t.Fatal("stale cached content", next.Code, next.Body.String())
 	}
 }

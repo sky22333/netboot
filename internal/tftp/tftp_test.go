@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ func TestStandardTransferEndsWithEmptyBlock(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		sendContent(ctx, cfg, observability.NewHub(), "kernel", client.LocalAddr(), nil, bytes.NewReader(make([]byte, 512)), 512)
+		sendContent(ctx, cfg, observability.NewHub(nil), "kernel", client.LocalAddr(), nil, bytes.NewReader(make([]byte, 512)), 512)
 	}()
 	for i, want := range []int{516, 4} {
 		buf := make([]byte, 2048)
@@ -79,7 +80,7 @@ func TestTransferCancellationInterruptsAckWait(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		sendContent(ctx, cfg, observability.NewHub(), "kernel", client.LocalAddr(), nil, bytes.NewReader([]byte("x")), 1)
+		sendContent(ctx, cfg, observability.NewHub(nil), "kernel", client.LocalAddr(), nil, bytes.NewReader([]byte("x")), 1)
 	}()
 	buf := make([]byte, 1024)
 	client.SetReadDeadline(time.Now().Add(time.Second))
@@ -114,7 +115,10 @@ func TestFirmwareServedFromTFTPRoot(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			done := make(chan struct{})
-			go func() { defer close(done); sendFile(ctx, cfg, observability.NewHub(), name, client.LocalAddr(), nil) }()
+			go func() {
+				defer close(done)
+				sendFile(ctx, cfg, observability.NewHub(nil), name, client.LocalAddr(), nil)
+			}()
 			client.SetReadDeadline(time.Now().Add(2 * time.Second))
 			buf := make([]byte, 1024)
 			n, remote, err := client.ReadFrom(buf)
@@ -133,5 +137,78 @@ func TestFirmwareServedFromTFTPRoot(t *testing.T) {
 				t.Fatal("transfer did not finish")
 			}
 		})
+	}
+}
+
+func TestNegotiationRejectsInvalidAndHonorsSmallBlocks(t *testing.T) {
+	for _, raw := range []string{"0", "7", "65465", "no"} {
+		if _, err := negotiatedBlockSize(map[string]string{"blksize": raw}, 1428); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+	for _, size := range []int{8, 128, 512, 1428} {
+		got, err := negotiatedBlockSize(map[string]string{"blksize": fmt.Sprint(size)}, 1428)
+		if err != nil || got != size {
+			t.Fatalf("size %d: %d %v", size, got, err)
+		}
+	}
+}
+
+func TestLostOACKAckRetransmitsWithoutChangingBlockSize(t *testing.T) {
+	client, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	cfg := testSettings(t)
+	cfg.TFTP.TimeoutSeconds = 1
+	cfg.TFTP.RetryCount = 2
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sendContent(ctx, cfg, observability.NewHub(nil), "file", client.LocalAddr(), map[string]string{"blksize": "1024"}, bytes.NewReader(make([]byte, 1024)), 1024)
+	}()
+	buf := make([]byte, 2048)
+	for i := 0; i < 2; i++ {
+		client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, remote, err := client.ReadFrom(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(buf[:n], append([]byte{0, opOACK}, []byte("blksize\x001024\x00")...)) {
+			t.Fatalf("changed OACK: %x", buf[:n])
+		}
+		if i == 1 {
+			client.WriteTo([]byte{0, opACK, 0, 0}, remote)
+		}
+	}
+	for i, want := range []int{1028, 4} {
+		client.SetReadDeadline(time.Now().Add(time.Second))
+		n, remote, err := client.ReadFrom(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != want || binary.BigEndian.Uint16(buf[:2]) != opDATA {
+			t.Fatalf("changed data size: %d", n)
+		}
+		client.WriteTo([]byte{0, opACK, 0, byte(i + 1)}, remote)
+	}
+	<-done
+}
+
+func TestWriteRequestsAreRejected(t *testing.T) {
+	client, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	handle(context.Background(), testSettings(t), observability.NewHub(nil), append([]byte{0, opWRQ}, []byte("file\x00octet\x00")...), client.LocalAddr())
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 512)
+	n, _, err := client.ReadFrom(buf)
+	if err != nil || n < 4 || binary.BigEndian.Uint16(buf[:2]) != opERROR || binary.BigEndian.Uint16(buf[2:4]) != errAccessViolation {
+		t.Fatalf("write request: %x %v", buf[:n], err)
 	}
 }

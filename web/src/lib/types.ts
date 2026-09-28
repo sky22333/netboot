@@ -15,12 +15,10 @@ export type ServiceConfig = {
   tftp: {
     enabled: boolean;
     root: string;
-    allow_upload: boolean;
     max_transfers: number;
     block_size_max: number;
     retry_count: number;
     timeout_seconds: number;
-    max_upload_bytes: number;
   };
   httpboot: {
     enabled: boolean;

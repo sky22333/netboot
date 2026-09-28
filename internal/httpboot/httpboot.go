@@ -1,7 +1,6 @@
 package httpboot
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -18,35 +17,11 @@ import (
 	"pxe/internal/storage"
 )
 
-func Handler(settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/client/report", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var report struct {
-			IP         string `json:"ip"`
-			DiskHealth string `json:"disk_health"`
-			NetSpeed   string `json:"net_speed"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&report); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		report.IP = clientIP(r)
-		if err := store.UpdateClientHealth(r.Context(), report.IP, report.DiskHealth, report.NetSpeed); err != nil {
-			http.Error(w, "报告保存失败", 500)
-			return
-		}
-		events.Publish("info", "clients", "收到客户端健康报告: "+report.IP)
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.Handle("/", fileHandler(settings, store, events))
-	return mux
+func Handler(settings storage.ServiceSettings, events *observability.Hub) http.Handler {
+	return fileHandler(settings, events)
 }
 
-func fileHandler(settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) http.Handler {
+func fileHandler(settings storage.ServiceSettings, events *observability.Hub) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -90,7 +65,7 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 			serveDirectory(w, r, f, r.URL.Path)
 			return
 		}
-		etag := fmt.Sprintf(`W/"%x-%x"`, info.ModTime().Unix(), info.Size())
+		etag := fmt.Sprintf(`W/"%x-%x"`, info.ModTime().UnixNano(), info.Size())
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -104,8 +79,7 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		http.ServeContent(rec, r, info.Name(), info.ModTime(), f)
 		if rec.status < 400 {
-			fields := map[string]any{"path": rel, "method": r.Method, "status": rec.status, "range": rangeHeader, "sent": rec.written, "total": info.Size(), "duration_ms": time.Since(started).Milliseconds(), "client": clientIP(r)}
-			_ = store.AddEvent(r.Context(), "info", "httpboot", "客户端请求 HTTP 文件", fields)
+
 			events.Publish("info", "httpboot", httpFileSentMessage(rel, r.Method, rec.status, rangeHeader, rec.written, info.Size(), time.Since(started), clientIP(r)))
 		}
 	})

@@ -5,7 +5,7 @@
       class="h-32 w-full"
       aria-label="正在加载"
     />
-    <Card class="p-6">
+    <div>
       <div
         class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"
       >
@@ -20,7 +20,7 @@
         }}</Button>
       </div>
       <Feedback :message="message" :error="error" />
-    </Card>
+    </div>
 
     <div v-if="config" class="grid gap-4 xl:grid-cols-2">
       <Card class="p-6">
@@ -227,22 +227,10 @@
                 placeholder="重试次数"
               />
             </div>
-            <div class="min-w-0 space-y-2">
-              <Label for="configpage-19">上传上限（字节）</Label
-              ><Input
-                id="configpage-19"
-                v-model.number="config.tftp.max_upload_bytes"
-                class="w-full"
-                type="number"
-                min="0"
-                placeholder="上传限制字节"
-              />
-            </div>
           </div>
-          <Label for="configpage-20" class="flex items-center gap-2 text-sm"
-            ><Switch id="configpage-20" v-model="config.tftp.allow_upload" />
-            允许 TFTP 上传</Label
-          >
+          <p class="text-xs text-muted-foreground">
+            TFTP 仅下发文件，上传请使用文件管理。
+          </p>
         </div>
       </Card>
 
@@ -356,8 +344,12 @@
         <h2 class="font-semibold">SMB 共享</h2>
         <div class="mt-4 space-y-4">
           <Label for="configpage-31" class="flex items-center gap-2 text-sm"
-            ><Switch id="configpage-31" v-model="config.smb.enabled" /> 启用 SMB
-            共享</Label
+            ><Switch
+              id="configpage-31"
+              v-model="config.smb.enabled"
+              :disabled="!smbSupported"
+            />
+            启用 SMB 共享</Label
           >
           <div class="grid gap-2 sm:grid-cols-2">
             <div class="min-w-0 space-y-2">
@@ -391,7 +383,7 @@
             />
           </div>
           <p class="text-xs text-muted-foreground">
-            Windows 自动创建共享；其他系统需手动配置 Samba。
+            仅 Windows 支持自动管理共享；其他系统请使用 Samba。
           </p>
         </div>
       </Card>
@@ -420,6 +412,7 @@ import { api } from "../lib/api";
 import type { ServiceConfig } from "../lib/types";
 
 const config = ref<ServiceConfig | null>(null);
+const smbSupported = ref(false);
 const message = ref("");
 const error = ref(false);
 const saving = ref(false);
@@ -442,7 +435,12 @@ async function load() {
   error.value = false;
   message.value = "";
   try {
-    config.value = await api<ServiceConfig>("/config");
+    const [settings, capabilities] = await Promise.all([
+      api<ServiceConfig>("/config"),
+      api<{ smb_supported: boolean }>("/diagnostics"),
+    ]);
+    config.value = settings;
+    smbSupported.value = capabilities.smb_supported;
     savedConfig.value = JSON.stringify(config.value);
   } catch (e) {
     error.value = true;
@@ -462,10 +460,6 @@ async function save() {
   error.value = false;
   message.value = "";
   try {
-    await api("/config/validate", {
-      method: "POST",
-      body: JSON.stringify(config.value),
-    });
     config.value = await api<ServiceConfig>("/config", {
       method: "PUT",
       body: JSON.stringify(config.value),

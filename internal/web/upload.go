@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -83,41 +82,13 @@ func (h *Handler) uploadFile(c *gin.Context) {
 		Fail(c, status, "UPLOAD_FAILED", "上传未完成："+err.Error())
 		return
 	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "files", "上传文件", gin.H{"path": path})
+	h.app.EventHub().Publish("info", "files", "上传文件: "+path)
 	OK(c, gin.H{"path": path})
 }
 
 func saveUpload(ctx context.Context, root *os.Root, name string, src io.Reader, size int64) error {
 	cleanupUploads(root)
-	temp := filetree.UploadTempPrefix + rand.Text()
-	f, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer root.Remove(temp)
-	defer f.Close()
-	n, err := io.Copy(f, src)
-	if err != nil {
-		return err
-	}
-	if n != size {
-		return io.ErrUnexpectedEOF
-	}
-	if err := f.Chmod(0644); err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	// Link publishes a complete file atomically and never replaces an existing target.
-	// Both names are in the same directory/filesystem. Unsupported filesystems fail safely.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return root.Link(temp, name)
+	return filetree.Write(ctx, root, name, src, size, false)
 }
 
 // Aborted requests are removed immediately. Crash leftovers are reclaimed on the

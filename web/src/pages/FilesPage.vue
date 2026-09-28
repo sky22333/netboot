@@ -587,6 +587,7 @@ const editorOpen = ref(false);
 const editingPath = ref("");
 const editorContent = ref("");
 const originalContent = ref("");
+const editorRevision = ref("");
 const editorRef = ref<InstanceType<typeof Textarea> | null>(null);
 
 const activeRoot = computed(
@@ -924,7 +925,7 @@ async function editFile(file: FileEntry) {
 }
 
 async function loadEditorContent(path: string) {
-  const res = await api<{ content: string }>(
+  const res = await api<{ content: string; revision: string }>(
     `/files/content?root=${root.value}&path=${encodeURIComponent(path)}`,
   );
   editing.value = true;
@@ -932,6 +933,7 @@ async function loadEditorContent(path: string) {
   editingPath.value = path;
   editorContent.value = res.content;
   originalContent.value = res.content;
+  editorRevision.value = res.revision;
 
   await focusEditor();
 }
@@ -940,15 +942,17 @@ async function saveContent() {
   if (!editing.value || !dirty.value) return;
   const content = editorContent.value;
   await run(async () => {
-    await api("/files/content", {
+    const saved = await api<{ revision: string }>("/files/content", {
       method: "PUT",
       body: JSON.stringify({
         root: root.value,
         path: editingPath.value,
         content,
+        revision: editorRevision.value,
       }),
     });
     originalContent.value = content;
+    editorRevision.value = saved.revision;
     await refreshCurrentDirectory(editingPath.value, "文件已保存");
   });
 }

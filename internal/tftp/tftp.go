@@ -3,12 +3,10 @@ package tftp
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,12 +30,10 @@ const (
 	errNotDefined       = 0
 	errFileNotFound     = 1
 	errAccessViolation  = 2
-	errDiskFull         = 3
 	errIllegalOperation = 4
-	errFileExists       = 6
 )
 
-func Serve(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, conn net.PacketConn) error {
+func Serve(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, conn net.PacketConn) error {
 	ctx, cancel := context.WithCancel(ctx)
 	addr := conn.LocalAddr().String()
 	defer conn.Close()
@@ -70,46 +66,50 @@ func Serve(ctx context.Context, settings storage.ServiceSettings, store *storage
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			handle(ctx, settings, store, events, packet, addr)
+			handle(ctx, settings, events, packet, addr)
 		}()
 	}
 }
 
-func handle(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, packet []byte, client net.Addr) {
-	if len(packet) < 4 {
+func handle(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, packet []byte, client net.Addr) {
+	if len(packet) < 4 || len(packet) > 512 {
 		return
 	}
 	op := int(binary.BigEndian.Uint16(packet[:2]))
 	parts := strings.Split(string(packet[2:]), "\x00")
-	if len(parts) < 2 {
+	if len(parts) < 3 || parts[len(parts)-1] != "" || (len(parts)-3)%2 != 0 {
+		return
+	}
+	if !strings.EqualFold(parts[1], "octet") {
+		sendErrorCode(client, errIllegalOperation, "Only octet mode is supported")
 		return
 	}
 	name := strings.TrimLeft(strings.ReplaceAll(parts[0], "\\", "/"), "/")
-	options := parseRequestOptions(parts)
+	options, err := parseRequestOptions(parts)
+	if err != nil {
+		sendErrorCode(client, 8, err.Error())
+		return
+	}
 	switch op {
 	case opRRQ:
 		sendFile(ctx, settings, events, name, client, options)
 	case opWRQ:
-		if !settings.TFTP.AllowUpload {
-			sendErrorCode(client, errAccessViolation, "上传已禁用")
-			return
-		}
-		receiveFile(ctx, settings, store, events, name, client, options)
+		sendErrorCode(client, errAccessViolation, "TFTP is read-only")
 	default:
 		sendErrorCode(client, errIllegalOperation, "不支持的 TFTP 操作")
 	}
 }
 
-func parseRequestOptions(parts []string) map[string]string {
+func parseRequestOptions(parts []string) (map[string]string, error) {
 	opts := map[string]string{}
 	for i := 2; i+1 < len(parts); i += 2 {
 		key := strings.ToLower(strings.TrimSpace(parts[i]))
-		if key == "" {
-			continue
+		if _, exists := opts[key]; key == "" || exists {
+			return nil, fmt.Errorf("Invalid or duplicate option")
 		}
 		opts[key] = strings.TrimSpace(parts[i+1])
 	}
-	return opts
+	return opts, nil
 }
 
 func sendFile(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, name string, client net.Addr, options map[string]string) {
@@ -132,7 +132,12 @@ func sendFile(ctx context.Context, settings storage.ServiceSettings, events *obs
 		return
 	}
 	defer f.Close()
-	size := fileSize(f)
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		sendErrorCode(client, errAccessViolation, "Not a regular file")
+		return
+	}
+	size := info.Size()
 	events.Publish("info", "tftp", "文件已就绪: "+name+" -> "+path+" size="+strconv.FormatInt(size, 10)+" client="+client.String())
 	sendContent(ctx, settings, events, name, client, options, f, size)
 }
@@ -146,22 +151,15 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	events.Publish("info", "tftp", "开始传输: "+name+" -> "+client.String())
-	blockSize := 512
-	if blockSize < 512 {
-		blockSize = 512
+	blockSize, err := negotiatedBlockSize(options, settings.TFTP.BlockSizeMax)
+	if err != nil {
+		sendErrorCode(client, 8, err.Error())
+		return
 	}
-	if blockSize > 1428 {
-		blockSize = 1428
-	}
-	if requested, ok := options["blksize"]; ok {
-		if v, err := strconv.Atoi(requested); err == nil {
-			blockSize = max(512, min(v, min(settings.TFTP.BlockSizeMax, 1428)))
-		}
-	}
-	if len(options) > 0 {
-		if !sendOACK(conn, client, options, blockSize, size) {
-			blockSize = 512
-			events.Publish("warning", "tftp", "客户端未确认 OACK，回退到标准 TFTP 模式: "+name)
+	if payload := buildOACKPayload(options, blockSize, size); len(payload) > 0 {
+		if !sendWithAck(conn, client, append([]byte{0, opOACK}, payload...), 0, settings.TFTP.RetryCount, settings.TFTP.TimeoutSeconds) {
+			events.Publish("error", "tftp", "选项协商失败: "+name)
+			return
 		}
 	}
 	block := uint16(1)
@@ -192,194 +190,6 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 	}
 }
 
-func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, name string, client net.Addr, options map[string]string) {
-	path, err := filetree.Path(name)
-	if err != nil {
-		sendErrorCode(client, errAccessViolation, "非法路径")
-		return
-	}
-	tree, err := os.OpenRoot(settings.TFTP.Root)
-	if err != nil {
-		sendErrorCode(client, errAccessViolation, "根目录不可写")
-		return
-	}
-	defer tree.Close()
-	if _, err := tree.Stat(path); err == nil {
-		sendErrorCode(client, errFileExists, "文件已存在")
-		return
-	}
-	if err := tree.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		sendErrorCode(client, errAccessViolation, "目录不可写")
-		return
-	}
-	f, err := tree.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		sendErrorCode(client, errAccessViolation, "文件不可写")
-		return
-	}
-	complete := false
-	defer func() {
-		_ = f.Close()
-		if !complete {
-			_ = tree.Remove(path)
-		}
-	}()
-	conn, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	defer stop()
-	blockSize := 512
-	if requested, ok := options["blksize"]; ok {
-		if v, err := strconv.Atoi(requested); err == nil {
-			blockSize = max(512, min(v, min(settings.TFTP.BlockSizeMax, 1428)))
-		}
-	}
-	if len(buildOACKPayload(options, blockSize, 0)) > 0 {
-		sendOACKNoWait(conn, client, options, blockSize, 0)
-	} else {
-		ack := make([]byte, 4)
-		binary.BigEndian.PutUint16(ack[0:2], opACK)
-		binary.BigEndian.PutUint16(ack[2:4], 0)
-		_, _ = conn.WriteTo(ack, client)
-	}
-	expected := uint16(1)
-	buf := make([]byte, 4+blockSize)
-	var written int64
-	timeout := timeoutDuration(settings.TFTP.TimeoutSeconds)
-	retries := normalizedRetry(settings.TFTP.RetryCount)
-	misses := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		_ = conn.SetReadDeadline(time.Now().Add(timeout))
-		n, addr, err := conn.ReadFrom(buf)
-		if err != nil {
-			misses++
-			if misses >= retries {
-				sendErrorCode(client, errNotDefined, "上传超时")
-				return
-			}
-			continue
-		}
-		if addr.String() != client.String() || n < 4 {
-			continue
-		}
-		misses = 0
-		op := binary.BigEndian.Uint16(buf[0:2])
-		block := binary.BigEndian.Uint16(buf[2:4])
-		if op == opERROR {
-			return
-		}
-		if op == opDATA && block == expected-1 {
-			writeAck(conn, client, block)
-			continue
-		}
-		if op != opDATA || block != expected {
-			continue
-		}
-		chunk := buf[4:n]
-		if settings.TFTP.MaxUploadBytes > 0 && written+int64(len(chunk)) > settings.TFTP.MaxUploadBytes {
-			sendErrorCode(client, errDiskFull, "上传文件超过限制")
-			return
-		}
-		if _, err := f.Write(chunk); err != nil {
-			sendErrorCode(client, errDiskFull, "写入失败")
-			return
-		}
-		written += int64(len(chunk))
-		writeAck(conn, client, block)
-		if len(chunk) < blockSize {
-			events.Publish("info", "tftp", "上传完成: "+name+" <- "+client.String())
-			complete = true
-			_ = f.Close()
-			tryParseHealthReport(ctx, store, events, tree, path, client)
-			return
-		}
-		expected++
-	}
-}
-
-func tryParseHealthReport(ctx context.Context, store *storage.Store, events *observability.Hub, tree *os.Root, path string, client net.Addr) {
-	f, err := tree.Open(path)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
-	if err != nil || len(b) == 0 || len(b) > 1024*1024 {
-		return
-	}
-	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return
-	}
-	disk := "Unknown"
-	if disks, ok := raw["Disks"].([]any); ok {
-		disk = "OK"
-		for _, item := range disks {
-			if m, ok := item.(map[string]any); ok {
-				status := fmt.Sprint(m["Health Status"])
-				if status != "" && status != "OK" && status != "Unknown" && status != "<nil>" {
-					disk = status
-					break
-				}
-			}
-		}
-	}
-	speed := "N/A"
-	if nets, ok := raw["Network"].([]any); ok {
-		for _, item := range nets {
-			if m, ok := item.(map[string]any); ok {
-				if v := fmt.Sprint(m["Transmit Link Speed"]); v != "" && v != "<nil>" {
-					speed = v
-					break
-				}
-			}
-		}
-	}
-	host, _, err := net.SplitHostPort(client.String())
-	if err != nil {
-		host = client.String()
-	}
-	_ = store.UpdateClientHealth(ctx, host, disk, speed)
-	events.Publish("info", "clients", "已解析客户端健康报告: "+host)
-}
-
-func sendOACKNoWait(conn net.PacketConn, client net.Addr, options map[string]string, blockSize int, size int64) {
-	payload := buildOACKPayload(options, blockSize, size)
-	if len(payload) == 0 {
-		return
-	}
-	oack := make([]byte, 2+len(payload))
-	binary.BigEndian.PutUint16(oack[0:2], opOACK)
-	copy(oack[2:], payload)
-	_, _ = conn.WriteTo(oack, client)
-}
-
-func sendOACK(conn net.PacketConn, client net.Addr, options map[string]string, blockSize int, size int64) bool {
-	payload := buildOACKPayload(options, blockSize, size)
-	if len(payload) == 0 {
-		return true
-	}
-	oack := make([]byte, 2+len(payload))
-	binary.BigEndian.PutUint16(oack[0:2], opOACK)
-	copy(oack[2:], payload)
-	_, _ = conn.WriteTo(oack, client)
-	buf := make([]byte, 516)
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, addr, err := conn.ReadFrom(buf)
-	if err != nil || addr.String() != client.String() || n < 4 {
-		return false
-	}
-	return binary.BigEndian.Uint16(buf[0:2]) == opACK && binary.BigEndian.Uint16(buf[2:4]) == 0
-}
-
 func buildOACKPayload(options map[string]string, blockSize int, size int64) []byte {
 	var payload []byte
 	if _, ok := options["blksize"]; ok {
@@ -391,31 +201,49 @@ func buildOACKPayload(options map[string]string, blockSize int, size int64) []by
 	return payload
 }
 
-func fileSize(f *os.File) int64 {
-	pos, _ := f.Seek(0, io.SeekCurrent)
-	info, err := f.Stat()
-	_, _ = f.Seek(pos, io.SeekStart)
-	if err != nil {
-		return 0
+func negotiatedBlockSize(options map[string]string, maximum int) (int, error) {
+	size := 512
+	if raw, ok := options["blksize"]; ok {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 8 || n > 65464 {
+			return 0, fmt.Errorf("Invalid blksize")
+		}
+		if maximum < 8 {
+			maximum = 1428
+		}
+		size = min(n, maximum, 1428)
 	}
-	return info.Size()
+	if raw, ok := options["tsize"]; ok && raw != "0" {
+		return 0, fmt.Errorf("Invalid tsize")
+	}
+	return size, nil
 }
 
 func sendWithAck(conn net.PacketConn, client net.Addr, data []byte, block uint16, retryCount, timeoutSeconds int) bool {
 	buf := make([]byte, 516)
 	for i := 0; i < normalizedRetry(retryCount); i++ {
-		_, _ = conn.WriteTo(data, client)
-		_ = conn.SetReadDeadline(time.Now().Add(timeoutDuration(timeoutSeconds)))
-		n, addr, err := conn.ReadFrom(buf)
-		if err != nil || addr.String() != client.String() || n < 4 {
-			continue
-		}
-		op := binary.BigEndian.Uint16(buf[0:2])
-		if op == opERROR {
+		if _, err := conn.WriteTo(data, client); err != nil {
 			return false
 		}
-		if op == opACK && binary.BigEndian.Uint16(buf[2:4]) == block {
-			return true
+		_ = conn.SetReadDeadline(time.Now().Add(timeoutDuration(timeoutSeconds)))
+		for {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				if e, ok := err.(net.Error); ok && e.Timeout() {
+					break
+				}
+				return false
+			}
+			if addr.String() != client.String() || n < 4 {
+				continue
+			}
+			op := binary.BigEndian.Uint16(buf[:2])
+			if op == opERROR {
+				return false
+			}
+			if n == 4 && op == opACK && binary.BigEndian.Uint16(buf[2:4]) == block {
+				return true
+			}
 		}
 	}
 	return false
@@ -432,13 +260,6 @@ func sendErrorCode(client net.Addr, code uint16, msg string) {
 	binary.BigEndian.PutUint16(data[2:4], code)
 	copy(data[4:], []byte(msg))
 	_, _ = conn.WriteTo(data, client)
-}
-
-func writeAck(conn net.PacketConn, client net.Addr, block uint16) {
-	ack := make([]byte, 4)
-	binary.BigEndian.PutUint16(ack[0:2], opACK)
-	binary.BigEndian.PutUint16(ack[2:4], block)
-	_, _ = conn.WriteTo(ack, client)
 }
 
 func normalizedRetry(v int) int {

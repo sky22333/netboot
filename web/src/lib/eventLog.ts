@@ -9,7 +9,7 @@ import {
 import { api } from "./api";
 
 export type LogEvent = {
-  id: string;
+  id: number;
   time: string;
   level: string;
   source: string;
@@ -36,9 +36,9 @@ export function useEventLog() {
     loading.value = true;
     error.value = "";
     try {
-      const rows = await api<any[]>(`/logs?limit=${limit}`);
+      const rows = await api<LogEvent[]>(`/logs?limit=${limit}`);
       if (requestEpoch !== epoch) return;
-      merge(Array.isArray(rows) ? rows.map(normalizeEvent) : []);
+      merge(Array.isArray(rows) ? rows : []);
     } catch (e) {
       if (requestEpoch !== epoch) return;
       error.value = e instanceof Error ? e.message : "日志读取失败";
@@ -58,7 +58,7 @@ export function useEventLog() {
     };
     source.onmessage = (message) => {
       try {
-        pending.push(normalizeEvent(JSON.parse(message.data)));
+        pending.push(JSON.parse(message.data) as LogEvent);
         if (pending.length > maxEvents) pending.shift();
         if (frame === undefined)
           frame = requestAnimationFrame(() => {
@@ -110,42 +110,14 @@ export function useEventLog() {
   };
 }
 
-function normalizeEvent(raw: any): LogEvent {
-  const id = Number(raw?.id ?? 0);
-  const origin = raw?.ts ? "db" : "live";
-  return {
-    id:
-      Number.isFinite(id) && id > 0
-        ? `${origin}-${id}`
-        : `${origin}-${fallbackID(raw)}`,
-    time: raw?.time ?? raw?.ts ?? "",
-    level: String(raw?.level ?? "info").toLowerCase(),
-    source: raw?.source ?? "system",
-    message: raw?.message ?? "",
-  };
-}
-
 function merge(next: LogEvent[]) {
   if (next.length === 0) return;
-  const byID = new Map<string, LogEvent>();
+  const byID = new Map<number, LogEvent>();
   for (const item of events.value) byID.set(item.id, item);
   for (const item of next) byID.set(item.id, item);
   events.value = [...byID.values()].sort(compareEvent).slice(-maxEvents);
 }
 
 function compareEvent(a: LogEvent, b: LogEvent) {
-  const at = Date.parse(a.time);
-  const bt = Date.parse(b.time);
-  if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt;
-  return a.id.localeCompare(b.id);
-}
-
-function fallbackID(raw: any) {
-  const text = `${raw?.time ?? raw?.ts ?? ""}|${raw?.source ?? ""}|${raw?.message ?? ""}`;
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return Math.abs(hash);
+  return a.id - b.id;
 }

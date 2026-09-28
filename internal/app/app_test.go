@@ -8,6 +8,7 @@ import (
 	"pxe/internal/config"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func testApp(t *testing.T) (*App, storage.ServiceSettings) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &App{Store: store, Events: observability.NewHub(), Boot: config.Default(), services: map[string]*serviceHandle{}}
+	a := &App{Store: store, Events: observability.NewHub(nil), Boot: config.Default(), services: map[string]*serviceHandle{}}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -58,6 +59,9 @@ func TestStartReportsBindFailure(t *testing.T) {
 	}
 }
 func TestStopUsesActiveSMBConfiguration(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows SMB lifecycle")
+	}
 	a, cfg := testApp(t)
 	cfg.SMB.Enabled = true
 	cfg.SMB.ShareName = "old"
@@ -123,6 +127,9 @@ func TestConcurrentLifecycleAndRollback(t *testing.T) {
 }
 
 func TestFailedSMBStartupRollsBackHTTPListener(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows SMB lifecycle")
+	}
 	a, cfg := testApp(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -147,4 +154,21 @@ func TestFailedSMBStartupRollsBackHTTPListener(t *testing.T) {
 		t.Fatalf("HTTP listener not rolled back: %v", err)
 	}
 	ln.Close()
+}
+
+func TestFailureStateIsVisibleBeforeEvent(t *testing.T) {
+	a, _ := testApp(t)
+	events, unsubscribe := a.Events.Subscribe()
+	defer unsubscribe()
+	a.mu.Lock()
+	a.start("httpboot", func(context.Context) error { return fmt.Errorf("stopped unexpectedly") })
+	a.mu.Unlock()
+	select {
+	case <-events:
+	case <-time.After(time.Second):
+		t.Fatal("missing failure event")
+	}
+	if status := a.Status().(Status); status.Services["httpboot"] != "failed" {
+		t.Fatal(status)
+	}
 }

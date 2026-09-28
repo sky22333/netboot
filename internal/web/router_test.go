@@ -35,7 +35,7 @@ func testRouter(t *testing.T) (http.Handler, *storage.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return NewRouter(testBackend{s, observability.NewHub()}), s
+	return NewRouter(testBackend{s, observability.NewHub(s)}), s
 }
 func request(r http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
 	q := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -202,6 +202,49 @@ func TestFirmwareCatalogAndSelection(t *testing.T) {
 	for _, body := range []string{`{"source":"project","files":["../escape"]}`, `{"source":"unknown","files":["undionly.kpxe"]}`, `{"source":"project","files":[]}`} {
 		if w := request(r, "POST", "/api/v1/firmware/download", body, token); w.Code != 400 {
 			t.Fatalf("invalid selection: %d %s", w.Code, w.Body)
+		}
+	}
+}
+
+func TestInvalidUpdateIDCannotCreateClient(t *testing.T) {
+	r, s := testRouter(t)
+	token := setupAdmin(t, r)
+	for _, id := range []string{"bad", "0", "-1", "999999999999999999999999"} {
+		w := request(r, "PUT", "/api/v1/clients/"+id, `{"name":"must not create"}`, token)
+		if w.Code != 400 {
+			t.Fatalf("%s: %d", id, w.Code)
+		}
+	}
+	rows, err := s.ListClients(context.Background())
+	if err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+}
+func TestHistoryAndLiveEventsShareIdentity(t *testing.T) {
+	r, s := testRouter(t)
+	token := setupAdmin(t, r)
+	rows, err := s.RecentEvents(context.Background(), 100)
+	if err != nil || len(rows) == 0 {
+		t.Fatal("events not persisted", rows, err)
+	}
+	w := request(r, "GET", "/api/v1/logs", "", token)
+	if w.Code != 200 || strings.Contains(w.Body.String(), `"ts"`) {
+		t.Fatal(w.Body)
+	}
+	if _, err = s.RawDB().Exec(`DROP TABLE events`); err != nil {
+		t.Fatal(err)
+	}
+	if w = request(r, "GET", "/api/v1/logs", "", token); w.Code != 500 {
+		t.Fatal("database failure hidden", w.Code)
+	}
+}
+
+func TestRetiredWriteAndReportEndpointsAreAbsent(t *testing.T) {
+	r, _ := testRouter(t)
+	token := setupAdmin(t, r)
+	for _, path := range []string{"/api/v1/clients/report", "/api/v1/config/validate", "/api/v1/services/restart"} {
+		if w := request(r, "POST", path, `{}`, token); w.Code != 404 {
+			t.Fatalf("%s returned %d", path, w.Code)
 		}
 	}
 }

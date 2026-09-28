@@ -448,6 +448,23 @@ test("管理后台完整操作与移动端导航", async ({ page }) => {
       });
     }
   }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await visit("账号管理");
+  await page
+    .getByRole("button", { name: "修改密码", exact: true })
+    .first()
+    .click();
+  await page.getByLabel("新密码", { exact: true }).fill("changed-password123");
+  await page.getByRole("button", { name: "保存密码", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "登录", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("用户名", { exact: true }).fill("admin");
+  await page.getByLabel("密码", { exact: true }).fill("changed-password123");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "账号管理", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(
     page.getByRole("button", { name: "登录", exact: true }),
