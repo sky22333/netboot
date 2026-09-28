@@ -1,0 +1,190 @@
+package web
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"pxe/internal/config"
+	"pxe/internal/observability"
+	"pxe/internal/storage"
+	"strings"
+	"sync"
+	"testing"
+)
+
+type testBackend struct {
+	store *storage.Store
+	hub   *observability.Hub
+}
+
+func (b testBackend) Storage() *storage.Store             { return b.store }
+func (b testBackend) EventHub() *observability.Hub        { return b.hub }
+func (b testBackend) BootConfig() config.BootConfig       { return config.Default() }
+func (b testBackend) Status() any                         { return map[string]string{"state": "test"} }
+func (b testBackend) StartServices(context.Context) error { return nil }
+func (b testBackend) StopServices(context.Context) error  { return nil }
+func testRouter(t *testing.T) (http.Handler, *storage.Store) {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := storage.Open(context.Background(), filepath.Join(dir, "pxe.db"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return NewRouter(testBackend{s, observability.NewHub()}), s
+}
+func request(r http.Handler, method, path, body, token string) *httptest.ResponseRecorder {
+	q := httptest.NewRequest(method, path, strings.NewReader(body))
+	q.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		q.AddCookie(&http.Cookie{Name: "pxe_session", Value: token})
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, q)
+	return w
+}
+func loginToken(t *testing.T, r http.Handler, user, pass string) string {
+	t.Helper()
+	w := request(r, "POST", "/api/v1/auth/login", fmt.Sprintf(`{"Username":%q,"Password":%q}`, user, pass), "")
+	if w.Code != 200 {
+		t.Fatalf("login: %d %s", w.Code, w.Body)
+	}
+	return w.Result().Cookies()[0].Value
+}
+func setupAdmin(t *testing.T, r http.Handler) string {
+	t.Helper()
+	w := request(r, "POST", "/api/v1/setup", `{"Username":"admin","Password":"password123"}`, "")
+	if w.Code != 200 {
+		t.Fatalf("setup: %s", w.Body)
+	}
+	return loginToken(t, r, "admin", "password123")
+}
+func TestSessionRevocationExpirationAndDeletion(t *testing.T) {
+	r, s := testRouter(t)
+	token := setupAdmin(t, r)
+	if w := request(r, "POST", "/api/v1/auth/logout", "", token); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if w := request(r, "GET", "/api/v1/status", "", token); w.Code != 401 {
+		t.Fatal("logged out token accepted")
+	}
+	token = loginToken(t, r, "admin", "password123")
+	if w := request(r, "POST", "/api/v1/users/1/password", `{"Password":"newpassword123"}`, token); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if w := request(r, "GET", "/api/v1/status", "", token); w.Code != 401 {
+		t.Fatal("password reset did not revoke")
+	}
+	token = loginToken(t, r, "admin", "newpassword123")
+	if w := request(r, "POST", "/api/v1/users", `{"Username":"second","Password":"password123"}`, token); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	other := loginToken(t, r, "second", "password123")
+	s.RawDB().SetMaxIdleConns(0) // force fresh SQLite connections before deletion
+	if w := request(r, "DELETE", "/api/v1/users/2", "", token); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if w := request(r, "POST", "/api/v1/users", `{"Username":"replacement","Password":"password123"}`, token); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if w := request(r, "GET", "/api/v1/status", "", other); w.Code != 401 {
+		t.Fatal("deleted user token accepted")
+	}
+	if _, err := s.RawDB().Exec(`UPDATE sessions SET expires=0`); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(r, "GET", "/api/v1/status", "", token); w.Code != 401 {
+		t.Fatal("expired token accepted")
+	}
+}
+func TestSetupAtomicAndRemovedRoutesAbsent(t *testing.T) {
+	r, s := testRouter(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			request(r, "POST", "/api/v1/setup", fmt.Sprintf(`{"Username":"admin%d","Password":"password123"}`, i), "")
+		}(i)
+	}
+	wg.Wait()
+	var count int
+	if err := s.RawDB().QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("setup race: %d %v", count, err)
+	}
+	for _, path := range []string{"/menus", "/actions", "/api/v1/menus", "/api/v1/actions", "/api/v1/files/torrent", "/dynamic.ipxe?myip=1.2.3.4&mymac=00:11:22:33:44:55"} {
+		if w := request(r, "GET", path, "", ""); w.Code != 404 {
+			t.Errorf("removed route %s: %d", path, w.Code)
+		}
+	}
+	var tables []string
+	rows, err := s.RawDB().Query(`SELECT name FROM sqlite_master WHERE type='table'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n string
+		rows.Scan(&n)
+		tables = append(tables, n)
+	}
+	for _, n := range tables {
+		if n == "boot_menus" || n == "boot_menu_items" || n == "client_actions" {
+			t.Errorf("retired table %s", n)
+		}
+	}
+}
+func TestConfigFailureDoesNotBypassAuth(t *testing.T) {
+	r, s := testRouter(t)
+	setupAdmin(t, r)
+	if _, err := s.RawDB().Exec(`UPDATE settings SET value='broken'`); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(r, "GET", "/api/v1/config", "", ""); w.Code != 401 {
+		t.Fatalf("auth bypass: %d", w.Code)
+	}
+}
+func TestClientAndFileCRUD(t *testing.T) {
+	r, s := testRouter(t)
+	token := setupAdmin(t, r)
+	w := request(r, "POST", "/api/v1/clients", `{"name":"PC","ip":"192.168.1.20","mac":"02:00:00:00:00:01"}`, token)
+	if w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	w = request(r, "PUT", "/api/v1/clients/1", `{"name":"PC2","ip":"192.168.1.21","mac":"02:00:00:00:00:01"}`, token)
+	if w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	cfg, err := s.GetSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(cfg.HTTPBoot.Root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	w = request(r, "PUT", "/api/v1/files/content", `{"root":"http","path":"boot.ipxe","content":"#!ipxe\nexit\n"}`, token)
+	if w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	w = request(r, "GET", "/api/v1/files/content?root=http&path=boot.ipxe", "", token)
+	if w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	w = request(r, "PUT", "/api/v1/files/content", `{"root":"http","path":"../outside.txt","content":"bad"}`, token)
+	if w.Code == 200 {
+		t.Fatal("path escaped")
+	}
+	w = request(r, "GET", "/api/v1/config", "", token)
+	var body map[string]any
+	if err = json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	cfgMap := body["data"].(map[string]any)
+	if _, ok := cfgMap["torrent"]; ok {
+		t.Fatal("retired config")
+	}
+}

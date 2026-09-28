@@ -62,6 +62,8 @@ export function useEventLog() {
     source = null
     connected.value = false
     if (retryTimer) window.clearTimeout(retryTimer)
+    retryTimer = undefined
+    events.value = []
   }
 
   return { events: latest, recent, connected, loading, error, load, connect, disconnect }

@@ -250,7 +250,7 @@ type FileListResponse = {
 const roots = [
   { key: 'http' as RootKey, label: 'HTTP Boot', localPath: 'data/boot/http', icon: Globe2, description: '放 boot.ipxe、linux、initrd.gz、自动安装配置和大镜像，通过 HTTP Boot 服务访问。' },
   { key: 'tftp' as RootKey, label: 'TFTP 启动', localPath: 'data/boot/tftp', icon: HardDrive, description: '放 undionly.kpxe、ipxe-x86_64.efi、ipxe-arm64.efi 等第一阶段或 TFTP 引导文件。' },
-  { key: 'netboot' as RootKey, label: 'netboot.xyz', localPath: 'data/boot/netboot', icon: FileText, description: '存放 netboot.xyz 官方启动文件，BIOS/UEFI 会按规则优先使用。' }
+  { key: 'netboot' as RootKey, label: 'netboot.xyz', localPath: 'data/boot/netboot', icon: FileText, description: '存放 netboot.xyz 官方固件；到服务配置中填写 netboot/文件名后使用。' }
 ]
 
 const locationStorageKey = 'pxe.files.location'

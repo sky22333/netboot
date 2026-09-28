@@ -21,3 +21,14 @@ func TestLoadOrCreate(t *testing.T) {
 		t.Fatalf("unexpected db path %s", cfg.Database.Path)
 	}
 }
+
+func TestRelativeDataDirectoryDoesNotDuplicateDatabasePath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg, err := LoadOrCreate("", "custom-data", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.Path != filepath.Join(cfg.Data.Dir, "pxe.db") {
+		t.Fatalf("duplicated path: %s", cfg.Database.Path)
+	}
+}

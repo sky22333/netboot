@@ -77,7 +77,7 @@
             <div class="truncate font-medium">{{ title }}</div>
           </div>
         </div>
-        <button class="btn btn-primary" :disabled="refreshing" @click="refresh">{{ refreshing ? '已刷新' : '刷新状态' }}</button>
+        <div class="flex gap-2"><button class="btn btn-primary" :disabled="refreshing" @click="refresh">{{ refreshing ? '已刷新' : '刷新状态' }}</button><button class="btn" @click="logout">退出登录</button></div>
       </header>
       <main class="p-4 lg:p-6">
         <RouterView v-slot="{ Component }">
@@ -91,10 +91,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Activity, Files, Gauge, Github, HardDrive, Menu, Network, ScrollText, Settings, Users, X } from 'lucide-vue-next'
 import { api } from './lib/api'
+import { useEventLog } from './lib/eventLog'
 
 const nav = [
   { path: '/', name: '仪表盘', icon: Gauge },
@@ -155,5 +156,15 @@ async function submitAuth() {
   }
 }
 
-onMounted(checkAuth)
+function expireAuth() {
+  useEventLog().disconnect()
+  password.value = ''
+  authMode.value = 'login'
+}
+async function logout() {
+  try { await api('/auth/logout', { method: 'POST' }); expireAuth() }
+  catch (e) { window.alert(e instanceof Error ? e.message : '退出失败') }
+}
+onMounted(() => { window.addEventListener('pxe-auth-expired', expireAuth); void checkAuth() })
+onUnmounted(() => window.removeEventListener('pxe-auth-expired', expireAuth))
 </script>

@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -34,7 +33,7 @@ func Default() BootConfig {
 	return BootConfig{
 		Data:     Data{Dir: "./data"},
 		Admin:    Admin{AdminAddr: "127.0.0.1:8088"},
-		Database: Database{Path: "./data/pxe.db"},
+		Database: Database{Path: "pxe.db"},
 	}
 }
 
@@ -42,7 +41,6 @@ func LoadOrCreate(configPath, dataDir, host, port string) (BootConfig, error) {
 	cfg := Default()
 	if dataDir != "" {
 		cfg.Data.Dir = dataDir
-		cfg.Database.Path = filepath.Join(dataDir, "pxe.db")
 	}
 	if configPath == "" {
 		configPath = filepath.Join(cfg.Data.Dir, "pxe.toml")
@@ -102,9 +100,6 @@ func expandPath(pathValue, dataDir string) string {
 		return filepath.Clean(pathValue)
 	}
 	clean := filepath.Clean(pathValue)
-	if strings.HasPrefix(clean, "data"+string(filepath.Separator)) || clean == "data" {
-		return filepath.Join(filepath.Dir(dataDir), clean)
-	}
 	return filepath.Join(dataDir, clean)
 }
 

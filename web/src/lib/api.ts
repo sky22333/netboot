@@ -20,6 +20,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     ...init
   })
+  if (res.status === 401) window.dispatchEvent(new Event('pxe-auth-expired'))
   const payload = await parsePayload<T>(res)
   if (!res.ok || !payload.ok) throw new Error(payload.error?.message || res.statusText || '请求失败')
   return payload.data
@@ -27,6 +28,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function upload(path: string, form: FormData): Promise<unknown> {
   const res = await fetch(`/api/v1${path}`, { method: 'POST', body: form, credentials: 'include' })
+  if (res.status === 401) window.dispatchEvent(new Event('pxe-auth-expired'))
   const payload = await parsePayload<unknown>(res)
   if (!res.ok || !payload.ok) throw new Error(payload.error?.message || res.statusText || '上传失败')
   return payload.data

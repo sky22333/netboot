@@ -1,43 +1,42 @@
 package smb
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
-
 	"pxe/internal/command"
 	"pxe/internal/storage"
+	"runtime"
 )
 
-func Apply(settings storage.SMBSettings, start bool) error {
-	if !settings.Enabled && start {
-		return nil
-	}
+func Apply(ctx context.Context, settings storage.SMBSettings, start bool) error {
 	if runtime.GOOS != "windows" {
-		if start {
-			return fmt.Errorf("当前平台不支持自动创建 SMB 共享，请手动配置 Samba 或系统共享")
-		}
-		return nil
+		return fmt.Errorf("当前平台请手动配置 Samba 或系统共享")
 	}
 	if settings.ShareName == "" {
 		return fmt.Errorf("SMB 共享名称不能为空")
 	}
-	_ = exec.Command("net", "share", settings.ShareName, "/delete").Run()
-	if !start {
+	if start {
+		if err := exec.CommandContext(ctx, "net", "share", settings.ShareName).Run(); err == nil {
+			return fmt.Errorf("共享 %s 已存在，请选择其他名称", settings.ShareName)
+		}
+		if err := os.MkdirAll(settings.Root, 0755); err != nil {
+			return err
+		}
+		perm := "/grant:Everyone,READ"
+		if settings.Permissions == "full" {
+			perm = "/grant:Everyone,FULL"
+		}
+		out, err := exec.CommandContext(ctx, "net", "share", settings.ShareName+"="+settings.Root, perm).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("创建共享失败: %w: %s", err, command.DecodeOutput(out))
+		}
 		return nil
 	}
-	if err := os.MkdirAll(settings.Root, 0755); err != nil {
-		return err
-	}
-	perm := "/grant:Everyone,READ"
-	if settings.Permissions == "full" {
-		perm = "/grant:Everyone,FULL"
-	}
-	cmd := exec.Command("net", "share", settings.ShareName+"="+settings.Root, perm)
-	out, err := cmd.CombinedOutput()
+	out, err := exec.CommandContext(ctx, "net", "share", settings.ShareName, "/delete").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, command.DecodeOutput(out))
+		return fmt.Errorf("停止共享失败: %w: %s", err, command.DecodeOutput(out))
 	}
 	return nil
 }

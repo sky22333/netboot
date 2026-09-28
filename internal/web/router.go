@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 
 	"pxe/internal/config"
 	"pxe/internal/dhcp"
+	"pxe/internal/filetree"
 	"pxe/internal/netboot"
 	"pxe/internal/netutil"
 	"pxe/internal/observability"
@@ -34,29 +36,30 @@ var webFS embed.FS
 type Backend interface {
 	Status() any
 	StartServices(context.Context) error
-	StopServices(context.Context)
+	StopServices(context.Context) error
 	Storage() *storage.Store
 	EventHub() *observability.Hub
 	BootConfig() config.BootConfig
 }
 
 type Handler struct {
+	authSlots    chan struct{}
 	app          Backend
-	sessions     *SessionManager
 	loginLimiter *LoginLimiter
 }
 
 func NewRouter(app Backend) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.MaxMultipartMemory = 2 << 30
+	r.MaxMultipartMemory = 8 << 20
+	_ = r.SetTrustedProxies(nil)
 	r.Use(gin.Recovery(), bodyLimit(128<<20))
-	h := &Handler{app: app, sessions: NewSessionManager(), loginLimiter: NewLoginLimiter()}
+	h := &Handler{app: app, authSlots: make(chan struct{}, 4), loginLimiter: NewLoginLimiter()}
 
 	api := r.Group("/api/v1")
 	api.GET("/setup/status", h.setupStatus)
-	api.POST("/setup", h.setup)
-	api.POST("/auth/login", h.login)
+	api.POST("/setup", h.limitAuthWork, h.setup)
+	api.POST("/auth/login", h.limitAuthWork, h.login)
 	api.POST("/auth/logout", h.logout)
 
 	protected := api.Group("")
@@ -100,19 +103,36 @@ func NewRouter(app Backend) http.Handler {
 
 func bodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Body != nil && !strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		limit := maxBytes
+		if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
+			limit = (2 << 30) + (1 << 20)
 		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		defer func() {
+			if c.Request.MultipartForm != nil {
+				_ = c.Request.MultipartForm.RemoveAll()
+			}
+		}()
 		c.Next()
 	}
 }
 
 func (h *Handler) setupStatus(c *gin.Context) {
-	OK(c, gin.H{"has_user": h.hasUsers(c.Request.Context())})
+	has, err := h.hasUsers(c.Request.Context())
+	if err != nil {
+		Fail(c, 500, "SETUP_STATUS_FAILED", "读取初始化状态失败")
+		return
+	}
+	OK(c, gin.H{"has_user": has})
 }
 
 func (h *Handler) setup(c *gin.Context) {
-	if h.hasUsers(c.Request.Context()) {
+	has, err := h.hasUsers(c.Request.Context())
+	if err != nil {
+		Fail(c, 500, "SETUP_STATUS_FAILED", "读取初始化状态失败")
+		return
+	}
+	if has {
 		Fail(c, http.StatusConflict, "SETUP_DONE", "初始化已经完成")
 		return
 	}
@@ -126,7 +146,7 @@ func (h *Handler) setup(c *gin.Context) {
 		Fail(c, 400, "VALIDATION_ERROR", "用户名不能为空，密码至少 8 位")
 		return
 	}
-	if err := h.createUser(c.Request.Context(), req.Username, req.Password); err != nil {
+	if err := h.createUser(c.Request.Context(), req.Username, req.Password, true); err != nil {
 		Fail(c, 500, "SETUP_FAILED", err.Error())
 		return
 	}
@@ -141,24 +161,29 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
-	key := c.ClientIP() + "|" + strings.ToLower(req.Username)
+	key := c.ClientIP()
 	if !h.loginLimiter.Allow(key) {
 		Fail(c, http.StatusTooManyRequests, "LOGIN_RATE_LIMITED", "登录尝试过多，请 10 分钟后再试")
 		return
 	}
-	if !h.checkLogin(c.Request.Context(), req.Username, req.Password) {
+	token, err := h.loginSession(c.Request.Context(), req.Username, req.Password)
+	if err != nil {
 		h.loginLimiter.Fail(key)
 		Fail(c, 401, "LOGIN_FAILED", "用户名或密码错误")
 		return
 	}
 	h.loginLimiter.Success(key)
-	token := h.sessions.Create(req.Username)
-	http.SetCookie(c.Writer, &http.Cookie{Name: "pxe_session", Value: token, Path: "/", MaxAge: 86400, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(c.Writer, &http.Cookie{Name: "pxe_session", Value: token, Path: "/", MaxAge: 86400, HttpOnly: true, Secure: c.Request.TLS != nil, SameSite: http.SameSiteLaxMode})
 	OK(c, gin.H{"username": req.Username})
 }
 
 func (h *Handler) logout(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{Name: "pxe_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	token, _ := c.Cookie("pxe_session")
+	if _, err := h.app.Storage().RawDB().ExecContext(c.Request.Context(), `DELETE FROM sessions WHERE token_hash=?`, sessionHash(token)); err != nil {
+		Fail(c, 500, "LOGOUT_FAILED", "退出失败")
+		return
+	}
+	http.SetCookie(c.Writer, &http.Cookie{Name: "pxe_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: c.Request.TLS != nil, SameSite: http.SameSiteLaxMode})
 	OK(c, gin.H{"message": "已退出"})
 }
 
@@ -181,7 +206,11 @@ func (h *Handler) diagnostics(c *gin.Context) {
 }
 
 func (h *Handler) dhcpDiagnostics(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	exclusions := []string{}
 	if settings.DHCP.Enabled && settings.DHCP.Mode == "dhcp" && settings.Server.AdvertiseIP != "" {
 		exclusions = append(exclusions, settings.Server.AdvertiseIP)
@@ -271,20 +300,14 @@ func (h *Handler) startServices(c *gin.Context) {
 func (h *Handler) stopServices(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	h.app.StopServices(ctx)
-	OK(c, h.app.Status())
-}
-
-func (h *Handler) restartServices(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-	h.app.StopServices(ctx)
-	if err := h.app.StartServices(c.Request.Context()); err != nil {
-		Fail(c, 500, "SERVICE_RESTART_FAILED", err.Error())
+	if err := h.app.StopServices(ctx); err != nil {
+		Fail(c, 500, "SERVICE_STOP_FAILED", err.Error())
 		return
 	}
 	OK(c, h.app.Status())
 }
+
+func (h *Handler) restartServices(c *gin.Context) { h.startServices(c) }
 
 func (h *Handler) listClients(c *gin.Context) {
 	clients, err := h.app.Storage().ListClients(c.Request.Context())
@@ -382,7 +405,11 @@ func (h *Handler) wol(c *gin.Context) {
 		Fail(c, 404, "CLIENT_NOT_FOUND", "客户端不存在")
 		return
 	}
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	result, err := sendWOL(client.MAC, wolTargets(client, settings))
 	if err != nil {
 		Fail(c, 400, "WOL_FAILED", err.Error())
@@ -412,7 +439,11 @@ func (h *Handler) createUserAPI(c *gin.Context) {
 		Fail(c, 400, "USER_INVALID", "用户名不能为空，密码至少 8 位")
 		return
 	}
-	if err := h.createUserWithRole(c.Request.Context(), req.Username, req.Password, req.Role); err != nil {
+	if req.Role != "" && req.Role != "admin" {
+		Fail(c, 400, "USER_INVALID", "不支持的用户角色")
+		return
+	}
+	if err := h.createUser(c.Request.Context(), req.Username, req.Password, false); err != nil {
 		Fail(c, 500, "USER_CREATE_FAILED", err.Error())
 		return
 	}
@@ -447,20 +478,31 @@ func (h *Handler) deleteUser(c *gin.Context) {
 }
 
 func (h *Handler) listFiles(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	rootType := c.DefaultQuery("root", "http")
 	root, err := fileRoot(settings, rootType)
 	if err != nil {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
+	defer root.Close()
 	rel := c.DefaultQuery("path", ".")
-	target, err := safeJoin(root, rel)
+	target, err := filetree.Path(rel)
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
 	}
-	entries, err := os.ReadDir(target)
+	dir, err := root.Open(target)
+	if err != nil {
+		Fail(c, 400, "PATH_INVALID", "目录不可读")
+		return
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
 	if err != nil {
 		Fail(c, 500, "FILE_LIST_FAILED", err.Error())
 		return
@@ -473,17 +515,22 @@ func (h *Handler) listFiles(c *gin.Context) {
 		}
 		files = append(files, gin.H{"name": entry.Name(), "dir": entry.IsDir(), "size": info.Size(), "mod_time": info.ModTime(), "editable": !entry.IsDir() && isEditableTextPath(entry.Name()) && info.Size() <= maxEditableFileBytes})
 	}
-	OK(c, gin.H{"root": rootType, "path": rel, "base_path": root, "files": files})
+	OK(c, gin.H{"root": rootType, "path": rel, "base_path": root.Name(), "files": files})
 }
 
 func (h *Handler) uploadFile(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	root, err := fileRoot(settings, c.DefaultPostForm("root", "http"))
 	if err != nil {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
-	dir, err := safeJoin(root, c.DefaultPostForm("path", "."))
+	defer root.Close()
+	dir, err := filetree.Path(c.DefaultPostForm("path", "."))
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
@@ -498,7 +545,7 @@ func (h *Handler) uploadFile(c *gin.Context) {
 		return
 	}
 	dst := filepath.Join(dir, filepath.Base(file.Filename))
-	if err := c.SaveUploadedFile(file, dst); err != nil {
+	if err := saveUpload(root, dst, file); err != nil {
 		Fail(c, 500, "UPLOAD_FAILED", err.Error())
 		return
 	}
@@ -507,7 +554,11 @@ func (h *Handler) uploadFile(c *gin.Context) {
 }
 
 func (h *Handler) mkdirFile(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	var req struct{ Root, Path string }
 	if err := c.ShouldBindJSON(&req); err != nil || req.Path == "" {
 		Fail(c, 400, "MKDIR_INVALID", "目录参数错误")
@@ -518,12 +569,13 @@ func (h *Handler) mkdirFile(c *gin.Context) {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
-	target, err := safeJoin(root, req.Path)
+	defer root.Close()
+	target, err := filetree.Path(req.Path)
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
 	}
-	if err := os.MkdirAll(target, 0755); err != nil {
+	if err := root.MkdirAll(target, 0755); err != nil {
 		Fail(c, 500, "MKDIR_FAILED", err.Error())
 		return
 	}
@@ -531,7 +583,11 @@ func (h *Handler) mkdirFile(c *gin.Context) {
 }
 
 func (h *Handler) renameFile(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	var req struct{ Root, From, To string }
 	if err := c.ShouldBindJSON(&req); err != nil || req.From == "" || req.To == "" {
 		Fail(c, 400, "RENAME_INVALID", "重命名参数错误")
@@ -542,17 +598,18 @@ func (h *Handler) renameFile(c *gin.Context) {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
-	from, err := safeJoin(root, req.From)
+	defer root.Close()
+	from, err := filetree.Path(req.From)
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "源路径无效")
 		return
 	}
-	to, err := safeJoin(root, req.To)
+	to, err := filetree.Path(req.To)
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "目标路径无效")
 		return
 	}
-	if err := os.Rename(from, to); err != nil {
+	if err := root.Rename(from, to); err != nil {
 		Fail(c, 500, "RENAME_FAILED", err.Error())
 		return
 	}
@@ -561,18 +618,23 @@ func (h *Handler) renameFile(c *gin.Context) {
 }
 
 func (h *Handler) deleteFile(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	root, err := fileRoot(settings, c.DefaultQuery("root", "http"))
 	if err != nil {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
-	target, err := safeJoin(root, c.Query("path"))
+	defer root.Close()
+	target, err := filetree.Path(c.Query("path"))
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
 	}
-	if err := os.Remove(target); err != nil {
+	if err := root.Remove(target); err != nil {
 		Fail(c, 500, "FILE_DELETE_FAILED", err.Error())
 		return
 	}
@@ -581,20 +643,25 @@ func (h *Handler) deleteFile(c *gin.Context) {
 }
 
 func (h *Handler) getFileContent(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	rootType := c.DefaultQuery("root", "http")
 	root, err := fileRoot(settings, rootType)
 	if err != nil {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
+	defer root.Close()
 	rel := c.Query("path")
-	target, err := safeJoin(root, rel)
+	target, err := filetree.Path(rel)
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
 	}
-	info, err := os.Stat(target)
+	info, err := root.Stat(target)
 	if err != nil {
 		Fail(c, 404, "FILE_NOT_FOUND", "文件不存在")
 		return
@@ -611,7 +678,17 @@ func (h *Handler) getFileContent(c *gin.Context) {
 		Fail(c, 400, "FILE_TOO_LARGE", "文件超过在线编辑大小限制")
 		return
 	}
-	data, err := os.ReadFile(target)
+	f, err := root.Open(target)
+	if err != nil {
+		Fail(c, 400, "FILE_READ_FAILED", "文件不可读")
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxEditableFileBytes+1))
+	if len(data) > maxEditableFileBytes {
+		Fail(c, 400, "FILE_TOO_LARGE", "文件超过在线编辑大小限制")
+		return
+	}
 	if err != nil {
 		Fail(c, 500, "FILE_READ_FAILED", err.Error())
 		return
@@ -624,7 +701,11 @@ func (h *Handler) getFileContent(c *gin.Context) {
 }
 
 func (h *Handler) saveFileContent(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	var req struct {
 		Root    string `json:"root"`
 		Path    string `json:"path"`
@@ -639,7 +720,8 @@ func (h *Handler) saveFileContent(c *gin.Context) {
 		Fail(c, 400, "ROOT_INVALID", "文件目录类型无效")
 		return
 	}
-	target, err := safeJoin(root, req.Path)
+	defer root.Close()
+	target, err := filetree.Path(req.Path)
 	if err != nil {
 		Fail(c, 400, "PATH_INVALID", "路径无效")
 		return
@@ -656,11 +738,11 @@ func (h *Handler) saveFileContent(c *gin.Context) {
 		Fail(c, 400, "FILE_NOT_TEXT", "文件内容必须是 UTF-8 文本")
 		return
 	}
-	if info, err := os.Stat(target); err == nil && info.IsDir() {
+	if info, err := root.Stat(target); err == nil && info.IsDir() {
 		Fail(c, 400, "FILE_IS_DIRECTORY", "目录不能在线编辑")
 		return
 	}
-	if err := os.WriteFile(target, []byte(req.Content), 0644); err != nil {
+	if err := root.WriteFile(target, []byte(req.Content), 0644); err != nil {
 		Fail(c, 500, "FILE_WRITE_FAILED", err.Error())
 		return
 	}
@@ -684,6 +766,7 @@ func (h *Handler) logs(c *gin.Context) {
 }
 
 func (h *Handler) eventStream(c *gin.Context) {
+	token, _ := c.Cookie("pxe_session")
 	ch, unsubscribe := h.app.EventHub().Subscribe()
 	defer unsubscribe()
 	c.Header("Content-Type", "text/event-stream")
@@ -706,6 +789,9 @@ func (h *Handler) eventStream(c *gin.Context) {
 			_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.ID, b)
 			return true
 		case <-ticker.C:
+			if !h.sessionValid(c.Request.Context(), token) {
+				return false
+			}
 			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
 			return true
 		case <-c.Request.Context().Done():
@@ -715,7 +801,11 @@ func (h *Handler) eventStream(c *gin.Context) {
 }
 
 func (h *Handler) netbootFiles(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	local := []gin.H{}
 	for _, name := range settings.NetbootXYZ.Files {
 		name = filepath.Base(name)
@@ -732,7 +822,11 @@ func (h *Handler) netbootFiles(c *gin.Context) {
 }
 
 func (h *Handler) netbootDownload(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
+	settings, settingsErr := h.app.Storage().GetSettings(c.Request.Context())
+	if settingsErr != nil {
+		Fail(c, 500, "CONFIG_READ_FAILED", "读取配置失败")
+		return
+	}
 	results := netboot.Download(c.Request.Context(), settings.NetbootXYZ, h.app.EventHub())
 	OK(c, gin.H{"downloads": results})
 }
@@ -746,37 +840,42 @@ var editableTextExts = map[string]bool{
 	".yaml": true, ".yml": true,
 }
 
-func fileRoot(settings storage.ServiceSettings, rootType string) (string, error) {
+func fileRoot(settings storage.ServiceSettings, rootType string) (*os.Root, error) {
+	var dir string
 	switch rootType {
 	case "", "http":
-		return settings.HTTPBoot.Root, nil
+		dir = settings.HTTPBoot.Root
 	case "tftp":
-		return settings.TFTP.Root, nil
+		dir = settings.TFTP.Root
 	case "netboot":
-		return settings.NetbootXYZ.DownloadDir, nil
+		dir = settings.NetbootXYZ.DownloadDir
 	default:
-		return "", os.ErrInvalid
+		return nil, os.ErrInvalid
 	}
+	return os.OpenRoot(dir)
+}
+
+func saveUpload(root *os.Root, path string, header *multipart.FileHeader) error {
+	src, err := header.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := root.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(dst, src)
+	closeErr := dst.Close()
+	if copyErr != nil {
+		_ = root.Remove(path)
+		return copyErr
+	}
+	return closeErr
 }
 
 func isEditableTextPath(path string) bool {
 	return editableTextExts[strings.ToLower(filepath.Ext(path))]
-}
-
-func safeJoin(root, rel string) (string, error) {
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-	target := filepath.Join(rootAbs, filepath.Clean(rel))
-	targetAbs, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	if targetAbs != rootAbs && !strings.HasPrefix(targetAbs, rootAbs+string(filepath.Separator)) {
-		return "", os.ErrPermission
-	}
-	return targetAbs, nil
 }
 
 type wolResult struct {
@@ -823,6 +922,9 @@ func sendWOL(macText string, targets []string) (wolResult, error) {
 }
 
 func wolTargets(client storage.Client, settings storage.ServiceSettings) []string {
+	if client.IP == "" {
+		client.IP = client.ObservedIP
+	}
 	hosts := []string{"255.255.255.255"}
 	if ip := net.ParseIP(client.IP).To4(); ip != nil {
 		hosts = append(hosts, ip.String())

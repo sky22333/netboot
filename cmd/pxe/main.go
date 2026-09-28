@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -27,7 +28,7 @@ func main() {
 
 	if *configPath == "" && *dataDir == "" {
 		if exe, err := os.Executable(); err == nil {
-			_ = os.Chdir(filepathDir(exe))
+			_ = os.Chdir(filepath.Dir(exe))
 		}
 	}
 
@@ -55,15 +56,6 @@ func main() {
 		slog.Error("应用运行失败", "error", err)
 		os.Exit(1)
 	}
-}
-
-func filepathDir(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '\\' || path[i] == '/' {
-			return path[:i]
-		}
-	}
-	return "."
 }
 
 func browserAddr(addr string) string {

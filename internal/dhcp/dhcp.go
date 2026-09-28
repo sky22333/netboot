@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"log/slog"
 	"net"
-	"sync"
 	"time"
 
 	"pxe/internal/booturl"
@@ -17,208 +15,17 @@ import (
 
 const magicCookie = "\x63\x82\x53\x63"
 
-func RunProxy(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) {
-	run(ctx, settings, store, events, "4011", true, nil)
-}
-
-func RunProxyDiscover(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) {
-	run(ctx, settings, store, events, "67", true, nil)
-}
-
-func RunDHCP(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) {
-	run(ctx, settings, store, events, "67", false, newLeasePool(settings, clientReservedIPs(ctx, store)...))
-}
-
-type leasePool struct {
-	mu        sync.Mutex
-	available []net.IP
-	offered   map[string]lease
-	leased    map[string]lease
-	used      map[string]string
-	ttl       time.Duration
-}
-
-type lease struct {
-	IP      string
-	Expires time.Time
-}
-
-func newLeasePool(settings storage.ServiceSettings, reservedIPs ...string) *leasePool {
-	p := &leasePool{offered: map[string]lease{}, leased: map[string]lease{}, used: map[string]string{}, ttl: time.Duration(settings.DHCP.LeaseTimeSeconds) * time.Second}
-	reserved := map[string]bool{}
-	for _, ip := range reservedIPs {
-		if parsed := net.ParseIP(ip).To4(); parsed != nil {
-			reserved[parsed.String()] = true
-		}
-	}
-	start := net.ParseIP(settings.DHCP.PoolStart).To4()
-	end := net.ParseIP(settings.DHCP.PoolEnd).To4()
-	if start == nil || end == nil {
-		return p
-	}
-	s := binary.BigEndian.Uint32(start)
-	e := binary.BigEndian.Uint32(end)
-	for i := s; i <= e; i++ {
-		buf := make([]byte, 4)
-		binary.BigEndian.PutUint32(buf, i)
-		ip := net.IP(buf)
-		if !reserved[ip.String()] {
-			p.available = append(p.available, ip)
-		}
-		if i == ^uint32(0) {
-			break
-		}
-	}
-	if p.ttl <= 0 {
-		p.ttl = 24 * time.Hour
-	}
-	return p
-}
-
-func clientReservedIPs(ctx context.Context, store *storage.Store) []string {
-	clients, err := store.ListClients(ctx)
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(clients))
-	for _, client := range clients {
-		if client.IP != "" {
-			out = append(out, client.IP)
-		}
-	}
-	return out
-}
-
-func (p *leasePool) Assign(mac, requested string) string {
-	if p == nil {
-		return "0.0.0.0"
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	now := time.Now()
-	p.cleanup(now)
-	if l, ok := p.leased[mac]; ok && l.Expires.After(now) {
-		return l.IP
-	}
-	if l, ok := p.offered[mac]; ok && l.Expires.After(now) {
-		return l.IP
-	}
-	if requested != "" && requested != "0.0.0.0" && p.inPool(requested) && p.used[requested] == "" {
-		p.offered[mac] = lease{IP: requested, Expires: now.Add(60 * time.Second)}
-		p.used[requested] = mac
-		return requested
-	}
-	for len(p.available) > 0 {
-		ip := p.available[0].String()
-		p.available = p.available[1:]
-		if p.used[ip] == "" {
-			p.offered[mac] = lease{IP: ip, Expires: now.Add(60 * time.Second)}
-			p.used[ip] = mac
-			return ip
-		}
-	}
-	return ""
-}
-
-func (p *leasePool) Confirm(mac, ip string) string {
-	if p == nil {
-		return ip
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cleanup(time.Now())
-	if ip == "" || ip == "0.0.0.0" {
-		if l, ok := p.offered[mac]; ok {
-			ip = l.IP
-		}
-	}
-	if ip == "" || !p.inPool(ip) {
-		return ""
-	}
-	if owner := p.used[ip]; owner != "" && owner != mac {
-		return ""
-	}
-	l := lease{IP: ip, Expires: time.Now().Add(p.ttl)}
-	p.leased[mac] = l
-	delete(p.offered, mac)
-	p.used[ip] = mac
-	return ip
-}
-
-func (p *leasePool) Release(mac string) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if l, ok := p.leased[mac]; ok {
-		delete(p.used, l.IP)
-		p.available = append(p.available, net.ParseIP(l.IP).To4())
-	}
-	if l, ok := p.offered[mac]; ok {
-		delete(p.used, l.IP)
-		p.available = append(p.available, net.ParseIP(l.IP).To4())
-	}
-	delete(p.leased, mac)
-	delete(p.offered, mac)
-}
-
-func (p *leasePool) cleanup(now time.Time) {
-	for mac, l := range p.offered {
-		if !l.Expires.After(now) {
-			delete(p.offered, mac)
-			delete(p.used, l.IP)
-			p.available = append(p.available, net.ParseIP(l.IP).To4())
-		}
-	}
-	for mac, l := range p.leased {
-		if !l.Expires.After(now) {
-			delete(p.leased, mac)
-			delete(p.used, l.IP)
-			p.available = append(p.available, net.ParseIP(l.IP).To4())
-		}
-	}
-}
-
-func (p *leasePool) inPool(ip string) bool {
-	if net.ParseIP(ip).To4() == nil {
-		return false
-	}
-	for _, candidate := range p.available {
-		if candidate.String() == ip {
-			return true
-		}
-	}
-	for _, l := range p.offered {
-		if l.IP == ip {
-			return true
-		}
-	}
-	for _, l := range p.leased {
-		if l.IP == ip {
-			return true
-		}
-	}
-	return false
-}
-
-func run(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, port string, proxy bool, pool *leasePool) {
-	addr := net.JoinHostPort(settings.Server.ListenIP, port)
-	conn, err := listenPacket(ctx, "udp4", addr)
-	if err != nil {
-		events.Publish("error", "dhcp", "监听失败 "+addr+": "+err.Error())
-		return
-	}
+func Serve(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, conn net.PacketConn, proxy bool) error {
+	addr := conn.LocalAddr().String()
+	_, port, _ := net.SplitHostPort(addr)
 	defer conn.Close()
 	name := "DHCP"
 	if proxy {
 		name = "ProxyDHCP"
 	}
 	events.Publish("info", "dhcp", name+" 已启动: "+addr)
-	go func() {
-		<-ctx.Done()
-		_ = conn.Close()
-	}()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	buf := make([]byte, 1500)
 	for {
 		n, remote, err := conn.ReadFrom(buf)
@@ -226,14 +33,13 @@ func run(ctx context.Context, settings storage.ServiceSettings, store *storage.S
 			select {
 			case <-ctx.Done():
 				events.Publish("info", "dhcp", name+" 已停止")
-				return
+				return nil
 			default:
-				slog.Warn("dhcp read error", "error", err)
-				continue
+				return err
 			}
 		}
 		req := append([]byte(nil), buf[:n]...)
-		resp := buildResponse(ctx, settings, store, events, req, proxy, pool)
+		resp := buildResponse(ctx, settings, store, events, req, proxy)
 		if len(resp) == 0 {
 			continue
 		}
@@ -325,8 +131,8 @@ func responseMessageType(resp []byte) byte {
 	return 0
 }
 
-func buildResponse(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, req []byte, proxy bool, pool *leasePool) []byte {
-	if len(req) < 240 || string(req[236:240]) != magicCookie {
+func buildResponse(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, req []byte, proxy bool) []byte {
+	if len(req) < 240 || req[0] != 1 || req[1] != 1 || req[2] != 6 || string(req[236:240]) != magicCookie {
 		return nil
 	}
 	opts := parseOptions(req[240:])
@@ -335,8 +141,14 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 		msgType = v[0]
 	}
 	if msgType == 4 || msgType == 7 {
-		if pool != nil {
-			pool.Release(macFromPacket(req))
+		if !proxy && settings.DHCP.Mode == "dhcp" && len(opts[54]) == 4 && net.IP(opts[54]).String() == settings.Server.AdvertiseIP {
+			ip := net.IP(req[12:16]).String()
+			if msgType == 4 && len(opts[50]) == 4 {
+				ip = net.IP(opts[50]).String()
+			}
+			if err := store.ReleaseLease(ctx, macFromPacket(req), ip, msgType == 4); err != nil {
+				events.Publish("error", "dhcp", err.Error())
+			}
 		}
 		return nil
 	}
@@ -357,33 +169,34 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 		events.Publish("info", "dhcp", fmt.Sprintf("忽略普通 DHCP 客户端 %s: vendor=%q", mac, vendorClass))
 		return nil
 	}
-	if staticIP, ok := store.GetIPForMAC(ctx, mac); ok && !proxy && settings.DHCP.Mode == "dhcp" {
-		clientIP = staticIP
-	} else if !proxy && settings.DHCP.Mode == "dhcp" {
+	if !proxy && settings.DHCP.Mode == "dhcp" {
 		requested := ""
-		if v := opts[50]; len(v) == 4 {
-			requested = net.IP(v).String()
-		} else if ciaddr := net.IP(req[12:16]).To4(); ciaddr != nil && ciaddr.String() != "0.0.0.0" {
-			requested = ciaddr.String()
+		if len(opts[50]) == 4 {
+			requested = net.IP(opts[50]).String()
+		} else if clientIP != "0.0.0.0" {
+			requested = clientIP
 		}
-		if msgType == 1 {
-			clientIP = pool.Assign(mac, requested)
-		} else {
-			clientIP = pool.Confirm(mac, requested)
+		var err error
+		clientIP, err = store.LeaseAddress(ctx, settings, mac, requested, msgType == 3)
+		if err != nil {
+			events.Publish("error", "dhcp", "租约处理失败: "+err.Error())
+			return nil
 		}
 		if clientIP == "" {
-			events.Publish("warning", "dhcp", fmt.Sprintf("地址池耗尽或请求地址不可用: %s", mac))
 			if msgType == 3 {
-				return nak(req, settings, "地址池耗尽或请求地址不可用")
+				return nak(req, settings, "请求地址不可用")
 			}
 			return nil
 		}
 	}
+
 	if !isPXE {
 		if proxy || settings.DHCP.Mode != "dhcp" {
 			return nil
 		}
-		store.UpsertClientSeen(ctx, mac, clientIP, "dhcp", "online")
+		if err := store.UpsertClientSeen(ctx, mac, clientIP, "dhcp", "online"); err != nil {
+			events.Publish("error", "dhcp", "记录客户端失败: "+err.Error())
+		}
 		_ = store.AddEvent(ctx, "info", "dhcp", "普通 DHCP 客户端获取网络参数", map[string]any{"mac": mac, "ip": clientIP, "vendor": vendorClass, "msg_type": msgType})
 		events.Publish("info", "dhcp", fmt.Sprintf("向普通 DHCP 客户端 %s 分配网络参数: ip=%s vendor=%q", mac, clientIP, vendorClass))
 		return offerNetworkConfig(req, settings, clientIP)
@@ -392,7 +205,9 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 	if isIPXE {
 		status = "ipxe"
 	}
-	store.UpsertClientSeen(ctx, mac, clientIP, arch, status)
+	if err := store.UpsertClientSeen(ctx, mac, clientIP, arch, status); err != nil {
+		events.Publish("error", "dhcp", "记录客户端失败: "+err.Error())
+	}
 	_ = store.AddEvent(ctx, "info", "dhcp", "收到客户端请求", map[string]any{"mac": mac, "arch": arch, "ipxe": isIPXE, "vendor": vendorClass, "user_class": userClass, "msg_type": msgType, "proxy": proxy})
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
@@ -416,8 +231,10 @@ func executableBootFile(settings storage.ServiceSettings, arch string) string {
 		return settings.BootFiles.UEFIARM32
 	case "uefi_arm64":
 		return settings.BootFiles.UEFIARM64
-	default:
+	case "bios":
 		return settings.BootFiles.BIOS
+	default:
+		return ""
 	}
 }
 

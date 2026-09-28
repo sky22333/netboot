@@ -5,7 +5,7 @@
         <div class="text-sm text-neutral-500">{{ labels[key] ?? key }}</div>
         <div class="mt-2 flex items-center gap-2 text-lg font-semibold">
           <span class="h-2.5 w-2.5 rounded-full" :class="value === 'running' ? 'bg-green-500' : 'bg-neutral-300'" />
-          {{ value === 'running' ? '运行中' : '已停止' }}
+          {{ value === 'running' ? '运行中' : value === 'failed' ? '运行失败' : '已停止' }}
         </div>
       </div>
     </section>
@@ -79,6 +79,7 @@ async function start() {
     error.value = true
     message.value = e instanceof Error ? e.message : '启动失败'
   } finally {
+    await load()
     busy.value = false
   }
 }
@@ -94,6 +95,7 @@ async function stop() {
     error.value = true
     message.value = e instanceof Error ? e.message : '停止失败'
   } finally {
+    await load()
     busy.value = false
   }
 }

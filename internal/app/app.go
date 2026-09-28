@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -26,198 +27,215 @@ type Status struct {
 	Services  map[string]string `json:"services"`
 	StartedAt string            `json:"started_at"`
 }
-
+type serviceHandle struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
+}
 type App struct {
 	Boot      config.BootConfig
 	Store     *storage.Store
 	Events    *observability.Hub
 	startedAt string
-
-	mu         sync.Mutex
-	services   map[string]serviceHandle
-	admin      *http.Server
-	smbRunning bool
-}
-
-type serviceHandle struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	mu        sync.Mutex // serializes the entire lifecycle, including SMB and rollback
+	services  map[string]*serviceHandle
+	activeSMB *storage.SMBSettings
+	applySMB  func(context.Context, storage.SMBSettings, bool) error
+	logger    *observability.RotatingLog
 }
 
 func New(ctx context.Context, boot config.BootConfig) (*App, error) {
-	setupLogger(boot)
 	store, err := storage.Open(ctx, boot.Database.Path, boot.Data.Dir)
 	if err != nil {
 		return nil, err
 	}
-	app := &App{
-		Boot:      boot,
-		Store:     store,
-		Events:    observability.NewHub(),
-		startedAt: time.Now().Format(time.RFC3339),
-		services:  map[string]serviceHandle{},
-	}
-	return app, nil
-}
-
-func setupLogger(boot config.BootConfig) {
-	logPath := filepath.Join(boot.Data.Dir, "logs", "pxe.log")
-	_ = os.MkdirAll(filepath.Dir(logPath), 0755)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logger, err := observability.OpenLog(filepath.Join(boot.Data.Dir, "logs", "pxe.log"))
 	if err != nil {
-		return
+		store.Close()
+		return nil, err
 	}
-	handler := slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(slog.NewTextHandler(logger, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	return &App{Boot: boot, Store: store, Events: observability.NewHub(), startedAt: time.Now().Format(time.RFC3339), services: map[string]*serviceHandle{}, applySMB: smb.Apply, logger: logger}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
-	router := web.NewRouter(a)
-	a.admin = &http.Server{Addr: a.Boot.Admin.AdminAddr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
-	errCh := make(chan error, 1)
-	go func() {
-		fmt.Println("Web 面板: http://" + displayAdminAddr(a.Boot.Admin.AdminAddr))
-		a.Events.Publish("info", "web", "管理 Web 服务已启动: http://"+a.Boot.Admin.AdminAddr)
-		if err := a.admin.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		a.StopServices(shutdownCtx)
-		_ = a.admin.Shutdown(shutdownCtx)
-		return a.Store.Close()
-	case err := <-errCh:
+	defer a.logger.Close()
+	defer a.Store.Close()
+	listener, err := net.Listen("tcp", a.Boot.Admin.AdminAddr)
+	if err != nil {
 		return err
 	}
-}
-
-func displayAdminAddr(addr string) string {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return addr
+	server := &http.Server{Handler: web.NewRouter(a), ReadHeaderTimeout: 10 * time.Second}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	fmt.Println("Web 面板: http://" + listener.Addr().String())
+	a.Events.Publish("info", "web", "管理 Web 已启动: "+listener.Addr().String())
+	select {
+	case <-ctx.Done():
+	case err = <-done:
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
+	shutdown, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	stopErr := a.StopServices(shutdown)
+	httpErr := server.Shutdown(shutdown)
+	if httpErr != nil {
+		_ = server.Close()
 	}
-	return net.JoinHostPort(host, port)
+	return errors.Join(err, stopErr, httpErr)
 }
 
 func (a *App) Status() any {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	services := map[string]string{
-		"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "smb": "stopped",
-	}
-	for name, handle := range a.services {
+	states := map[string]string{"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "smb": "stopped"}
+	for name, h := range a.services {
 		select {
-		case <-handle.done:
-			services[name] = "stopped"
+		case <-h.done:
+			if h.err != nil {
+				states[name] = "failed"
+			}
 		default:
-			services[name] = "running"
+			states[name] = "running"
 		}
 	}
-	if a.smbRunning {
-		services["smb"] = "running"
+	if a.activeSMB != nil {
+		states["smb"] = "running"
 	}
-	return Status{AdminHTTP: a.Boot.Admin.AdminAddr, Services: services, StartedAt: a.startedAt}
+	return Status{AdminHTTP: a.Boot.Admin.AdminAddr, Services: states, StartedAt: a.startedAt}
 }
+func (a *App) Storage() *storage.Store       { return a.Store }
+func (a *App) EventHub() *observability.Hub  { return a.Events }
+func (a *App) BootConfig() config.BootConfig { return a.Boot }
 
-func (a *App) Storage() *storage.Store {
-	return a.Store
-}
-
-func (a *App) EventHub() *observability.Hub {
-	return a.Events
-}
-
-func (a *App) BootConfig() config.BootConfig {
-	return a.Boot
-}
-
-func (a *App) StartServices(ctx context.Context) error {
-	a.StopServices(ctx)
+func (a *App) StartServices(ctx context.Context) (err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err = a.stopLocked(ctx); err != nil {
+		return err
+	}
 	settings, err := a.Store.GetSettings(ctx)
 	if err != nil {
 		return err
 	}
-	if settings.HTTPBoot.Enabled {
-		a.start("httpboot", func(ctx context.Context) { httpboot.Run(ctx, settings, a.Store, a.Events) })
+	if err = storage.ValidateSettings(settings); err != nil {
+		return err
 	}
-	if settings.SMB.Enabled {
-		if err := smb.Apply(settings.SMB, true); err != nil {
-			a.Events.Publish("error", "smb", "SMB 共享启动失败: "+err.Error())
-		} else {
-			a.setSMBRunning(true)
-			a.Events.Publish("info", "smb", "SMB 共享已启用")
+	defer func() {
+		if err != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err = errors.Join(err, a.stopLocked(cleanup))
+			a.Events.Publish("error", "services", err.Error())
+		}
+	}()
+	for _, dir := range []string{settings.HTTPBoot.Root, settings.TFTP.Root, settings.NetbootXYZ.DownloadDir} {
+		if err = os.MkdirAll(dir, 0755); err != nil {
+			return err
 		}
 	}
+	if settings.HTTPBoot.Enabled {
+		ln, e := new(net.ListenConfig).Listen(ctx, "tcp", settings.HTTPBoot.Addr)
+		if e != nil {
+			return fmt.Errorf("HTTP Boot 监听失败: %w", e)
+		}
+		server := &http.Server{Handler: httpboot.Handler(settings, a.Store, a.Events), ReadHeaderTimeout: 10 * time.Second}
+		a.start("httpboot", func(ctx context.Context) error {
+			stop := context.AfterFunc(ctx, func() { _ = server.Close() })
+			defer stop()
+			e := server.Serve(ln)
+			if errors.Is(e, http.ErrServerClosed) {
+				return nil
+			}
+			return e
+		})
+	}
 	if settings.TFTP.Enabled {
-		a.start("tftp", func(ctx context.Context) { tftp.Run(ctx, settings, a.Store, a.Events) })
+		conn, e := new(net.ListenConfig).ListenPacket(ctx, "udp4", net.JoinHostPort(settings.Server.ListenIP, "69"))
+		if e != nil {
+			return fmt.Errorf("TFTP 监听失败: %w", e)
+		}
+		a.start("tftp", func(ctx context.Context) error { return tftp.Serve(ctx, settings, a.Store, a.Events, conn) })
 	}
 	if settings.DHCP.Enabled {
 		if settings.DHCP.Mode == "dhcp" && settings.DHCP.DetectConflicts {
-			if servers, err := dhcp.DetectServers(ctx, settings.Server.ListenIP, 2*time.Second, settings.Server.AdvertiseIP); err == nil && len(servers) > 0 {
-				a.Events.Publish("warning", "dhcp", "检测到局域网内已有 DHCP 服务，完整 DHCP 模式可能发生冲突")
+			servers, e := dhcp.DetectServers(ctx, settings.Server.ListenIP, 2*time.Second, settings.Server.AdvertiseIP)
+			if e != nil {
+				return fmt.Errorf("DHCP 冲突探测失败: %w", e)
+			}
+			if len(servers) > 0 {
+				return fmt.Errorf("检测到已有 DHCP 服务: %v", servers)
 			}
 		}
-		if settings.DHCP.Mode == "dhcp" {
-			a.start("dhcp", func(ctx context.Context) { dhcp.RunDHCP(ctx, settings, a.Store, a.Events) })
-		} else {
-			a.start("proxy_dhcp_67", func(ctx context.Context) { dhcp.RunProxyDiscover(ctx, settings, a.Store, a.Events) })
+		for _, port := range []string{"67", "4011"} {
+			conn, e := dhcp.ListenPacket(ctx, "udp4", net.JoinHostPort(settings.Server.ListenIP, port))
+			if e != nil {
+				return fmt.Errorf("DHCP %s 监听失败: %w", port, e)
+			}
+			proxy := port == "4011" || settings.DHCP.Mode == "proxy"
+			name := "dhcp"
+			if port == "4011" {
+				name = "proxy_dhcp"
+			} else if proxy {
+				name = "proxy_dhcp_67"
+			}
+			a.start(name, func(ctx context.Context) error { return dhcp.Serve(ctx, settings, a.Store, a.Events, conn, proxy) })
 		}
-		a.start("proxy_dhcp", func(ctx context.Context) { dhcp.RunProxy(ctx, settings, a.Store, a.Events) })
 	}
-	a.Events.Publish("info", "services", "已启动启用的 PXE 服务")
+	if settings.SMB.Enabled {
+		if err = a.applySMB(ctx, settings.SMB, true); err != nil {
+			return err
+		}
+		copy := settings.SMB
+		a.activeSMB = &copy
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	a.Events.Publish("info", "services", "启用的服务已完成监听")
 	return nil
 }
 
-func (a *App) start(name string, run func(context.Context)) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+// Called only while holding mu; a service owns its listener and cancellation.
+func (a *App) start(name string, run func(context.Context) error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	a.services[name] = serviceHandle{cancel: cancel, done: done}
+	h := &serviceHandle{cancel: cancel, done: make(chan struct{})}
+	a.services[name] = h
 	go func() {
-		defer close(done)
-		run(ctx)
+		defer close(h.done)
+		defer cancel()
+		h.err = run(ctx)
+		if h.err != nil {
+			a.Events.Publish("error", name, h.err.Error())
+		}
 	}()
 }
-
-func (a *App) StopServices(ctx context.Context) {
-	a.mu.Lock()
-	handles := a.services
-	a.services = map[string]serviceHandle{}
-	a.mu.Unlock()
-	for _, handle := range handles {
-		handle.cancel()
-	}
-	settings, err := a.Store.GetSettings(ctx)
-	if err == nil && settings.SMB.Enabled {
-		if err := smb.Apply(settings.SMB, false); err != nil {
-			a.Events.Publish("warning", "smb", "SMB 共享停止失败: "+err.Error())
-		}
-	}
-	a.setSMBRunning(false)
-	for name, handle := range handles {
-		select {
-		case <-handle.done:
-		case <-ctx.Done():
-			a.Events.Publish("warning", "services", "服务停止超时: "+name)
-		case <-time.After(2 * time.Second):
-			a.Events.Publish("warning", "services", "服务停止等待超时: "+name)
-		}
-	}
-	if len(handles) > 0 {
-		a.Events.Publish("info", "services", "所有服务已停止")
-	}
-}
-
-func (a *App) setSMBRunning(running bool) {
+func (a *App) StopServices(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.smbRunning = running
+	return a.stopLocked(ctx)
+}
+func (a *App) stopLocked(ctx context.Context) error {
+	for _, h := range a.services {
+		h.cancel()
+	}
+	var errs []error
+	for name, h := range a.services {
+		select {
+		case <-h.done:
+			delete(a.services, name)
+		case <-ctx.Done():
+			errs = append(errs, fmt.Errorf("停止 %s: %w", name, ctx.Err()))
+		}
+	}
+	if a.activeSMB != nil {
+		if err := a.applySMB(ctx, *a.activeSMB, false); err != nil {
+			errs = append(errs, err)
+		} else {
+			a.activeSMB = nil
+		}
+	}
+	return errors.Join(errs...)
 }

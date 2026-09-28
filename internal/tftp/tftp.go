@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"pxe/internal/filetree"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
 )
@@ -37,33 +37,26 @@ const (
 	errFileExists       = 6
 )
 
-func Run(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) {
-	addr := net.JoinHostPort(settings.Server.ListenIP, "69")
-	conn, err := net.ListenPacket("udp", addr)
-	if err != nil {
-		events.Publish("error", "tftp", "TFTP 监听失败: "+err.Error())
-		return
-	}
+func Serve(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, conn net.PacketConn) error {
+	ctx, cancel := context.WithCancel(ctx)
+	addr := conn.LocalAddr().String()
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	events.Publish("info", "tftp", "TFTP 已启动: "+addr)
 	sem := make(chan struct{}, settings.TFTP.MaxTransfers)
 	var wg sync.WaitGroup
-	go func() {
-		<-ctx.Done()
-		_ = conn.Close()
-	}()
+	defer func() { cancel(); wg.Wait() }()
 	buf := make([]byte, 1500)
 	for {
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				wg.Wait()
 				events.Publish("info", "tftp", "TFTP 已停止")
-				return
+				return nil
 			default:
-				slog.Warn("tftp read error", "error", err)
-				continue
+				return err
 			}
 		}
 		packet := append([]byte(nil), buf[:n]...)
@@ -120,13 +113,19 @@ func parseRequestOptions(parts []string) map[string]string {
 }
 
 func sendFile(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, name string, client net.Addr, options map[string]string) {
-	path, err := resolveReadPath(settings, name)
+	root, path, err := filetree.Resolve(settings.TFTP.Root, settings.NetbootXYZ.DownloadDir, name)
 	if err != nil {
 		events.Publish("error", "tftp", "请求路径非法: "+name+" -> "+client.String()+" error="+err.Error())
 		sendErrorCode(client, errAccessViolation, "非法路径")
 		return
 	}
-	f, err := os.Open(path)
+	tree, err := os.OpenRoot(root)
+	if err != nil {
+		sendErrorCode(client, errAccessViolation, "根目录不可读")
+		return
+	}
+	defer tree.Close()
+	f, err := tree.Open(path)
 	if err != nil {
 		events.Publish("error", "tftp", "文件不存在或不可读: "+name+" -> "+path+" client="+client.String()+" error="+err.Error())
 		sendErrorCode(client, errFileNotFound, "文件不存在")
@@ -138,24 +137,16 @@ func sendFile(ctx context.Context, settings storage.ServiceSettings, events *obs
 	sendContent(ctx, settings, events, name, client, options, f, size)
 }
 
-func resolveReadPath(settings storage.ServiceSettings, name string) (string, error) {
-	clean := strings.TrimLeft(strings.ReplaceAll(name, "\\", "/"), "/")
-	if rel, ok := strings.CutPrefix(clean, "netboot/"); ok {
-		root, _ := filepath.Abs(settings.NetbootXYZ.DownloadDir)
-		return safeJoin(root, rel)
-	}
-	root, _ := filepath.Abs(settings.TFTP.Root)
-	return safeJoin(root, clean)
-}
-
 func sendContent(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, name string, client net.Addr, options map[string]string, reader io.Reader, size int64) {
 	conn, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	events.Publish("info", "tftp", "开始传输: "+name+" -> "+client.String())
-	blockSize := settings.TFTP.BlockSizeMax
+	blockSize := 512
 	if blockSize < 512 {
 		blockSize = 512
 	}
@@ -181,8 +172,8 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 			return
 		default:
 		}
-		n, err := reader.Read(buf)
-		if err != nil && n == 0 {
+		n, err := io.ReadFull(reader, buf)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return
 		}
 		data := make([]byte, 4+n)
@@ -203,37 +194,51 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 
 func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, name string, client net.Addr, options map[string]string) {
 	root, _ := filepath.Abs(settings.TFTP.Root)
-	path, err := safeJoin(root, name)
+	path, err := filetree.Path(name)
 	if err != nil {
 		sendErrorCode(client, errAccessViolation, "非法路径")
 		return
 	}
-	if _, err := os.Stat(path); err == nil {
+	tree, err := os.OpenRoot(root)
+	if err != nil {
+		sendErrorCode(client, errAccessViolation, "根目录不可写")
+		return
+	}
+	defer tree.Close()
+	if _, err := tree.Stat(path); err == nil {
 		sendErrorCode(client, errFileExists, "文件已存在")
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := tree.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		sendErrorCode(client, errAccessViolation, "目录不可写")
 		return
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	f, err := tree.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		sendErrorCode(client, errAccessViolation, "文件不可写")
 		return
 	}
-	defer f.Close()
+	complete := false
+	defer func() {
+		_ = f.Close()
+		if !complete {
+			_ = tree.Remove(path)
+		}
+	}()
 	conn, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	blockSize := 512
 	if requested, ok := options["blksize"]; ok {
 		if v, err := strconv.Atoi(requested); err == nil {
 			blockSize = max(512, min(v, min(settings.TFTP.BlockSizeMax, 1428)))
 		}
 	}
-	if len(options) > 0 {
+	if len(buildOACKPayload(options, blockSize, 0)) > 0 {
 		sendOACKNoWait(conn, client, options, blockSize, 0)
 	} else {
 		ack := make([]byte, 4)
@@ -259,7 +264,6 @@ func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *s
 			misses++
 			if misses >= retries {
 				sendErrorCode(client, errNotDefined, "上传超时")
-				_ = os.Remove(path)
 				return
 			}
 			continue
@@ -283,27 +287,32 @@ func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *s
 		chunk := buf[4:n]
 		if settings.TFTP.MaxUploadBytes > 0 && written+int64(len(chunk)) > settings.TFTP.MaxUploadBytes {
 			sendErrorCode(client, errDiskFull, "上传文件超过限制")
-			_ = os.Remove(path)
 			return
 		}
 		if _, err := f.Write(chunk); err != nil {
 			sendErrorCode(client, errDiskFull, "写入失败")
-			_ = os.Remove(path)
 			return
 		}
 		written += int64(len(chunk))
 		writeAck(conn, client, block)
 		if len(chunk) < blockSize {
 			events.Publish("info", "tftp", "上传完成: "+name+" <- "+client.String())
-			tryParseHealthReport(ctx, store, events, path, client)
+			complete = true
+			_ = f.Close()
+			tryParseHealthReport(ctx, store, events, tree, path, client)
 			return
 		}
 		expected++
 	}
 }
 
-func tryParseHealthReport(ctx context.Context, store *storage.Store, events *observability.Hub, path string, client net.Addr) {
-	b, err := os.ReadFile(path)
+func tryParseHealthReport(ctx context.Context, store *storage.Store, events *observability.Hub, tree *os.Root, path string, client net.Addr) {
+	f, err := tree.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
 	if err != nil || len(b) == 0 || len(b) > 1024*1024 {
 		return
 	}
@@ -445,17 +454,4 @@ func timeoutDuration(seconds int) time.Duration {
 		seconds = 3
 	}
 	return time.Duration(seconds) * time.Second
-}
-
-func safeJoin(root, request string) (string, error) {
-	clean := filepath.Clean(strings.ReplaceAll(request, "/", string(filepath.Separator)))
-	target := filepath.Join(root, clean)
-	abs, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes root")
-	}
-	return abs, nil
 }

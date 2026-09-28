@@ -4,7 +4,7 @@
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 class="text-lg font-semibold">客户端</h1>
-          <p class="mt-1 text-sm text-neutral-500">管理 PXE 客户端、静态绑定、待认领设备和唤醒操作。</p>
+          <p class="mt-1 text-sm text-neutral-500">管理 PXE 客户端、静态绑定、待绑定设备和唤醒操作。</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button class="btn" :disabled="busy" @click="load">{{ busy ? '刷新中...' : '刷新' }}</button>
@@ -15,7 +15,7 @@
         <input v-model.trim="batchPrefix" class="input" placeholder="名称前缀，例如 PC-" />
         <input v-model.trim="batchIP" class="input" placeholder="起始 IP" />
         <input v-model.number="batchCount" class="input" type="number" min="1" max="1000" />
-        <button class="btn" :disabled="busy || !canBatch" @click="batch">批量添加待认领</button>
+        <button class="btn" :disabled="busy || !canBatch" @click="batch">批量添加待绑定</button>
       </div>
       <p v-if="message" class="mt-3 text-sm" :class="error ? 'text-red-600' : 'text-neutral-500'">{{ message }}</p>
     </section>
@@ -39,8 +39,8 @@
                 <td class="min-w-0 px-4 py-3">
                   <button class="max-w-full truncate font-medium" @click="select(client)">{{ client.name }}</button>
                 </td>
-                <td class="px-4 py-3 text-neutral-600">{{ client.ip || '-' }}</td>
-                <td class="px-4 py-3 text-neutral-600">{{ client.mac || '待认领' }}</td>
+                <td class="px-4 py-3 text-neutral-600">{{ client.observed_ip || client.ip || '-' }}</td>
+                <td class="px-4 py-3 text-neutral-600">{{ client.mac || '待绑定' }}</td>
                 <td class="px-4 py-3">
                   <span class="rounded-full border px-2 py-0.5 text-xs" :class="statusClass(client.status)">{{ statusText[client.status] ?? client.status }}</span>
                 </td>
@@ -60,7 +60,7 @@
           <button v-for="client in clients" :key="client.id" class="flex w-full items-start justify-between gap-3 p-4 text-left text-sm hover:bg-neutral-50" @click="select(client)">
             <div class="min-w-0">
               <div class="truncate font-medium">{{ client.name }}</div>
-              <div class="mt-1 text-xs text-neutral-500">{{ client.ip || '未设置 IP' }} · {{ client.mac || '待认领' }}</div>
+              <div class="mt-1 text-xs text-neutral-500">{{ client.observed_ip || client.ip || '未观测 IP' }} · {{ client.mac || '待绑定' }}</div>
             </div>
             <span class="rounded-full border px-2 py-0.5 text-xs" :class="statusClass(client.status)">{{ statusText[client.status] ?? client.status }}</span>
           </button>
@@ -80,37 +80,17 @@
             <input v-model.trim="editing.name" class="input mt-1 w-full" placeholder="例如 PC-001" />
           </div>
           <div>
-            <label class="label">IP 地址</label>
+            <label class="label">静态绑定 IP</label>
             <input v-model.trim="editing.ip" class="input mt-1 w-full" placeholder="可留空，或填写静态绑定 IP" />
           </div>
           <div>
             <label class="label">MAC 地址</label>
-            <input v-model.trim="editing.mac" class="input mt-1 w-full" placeholder="可留空，设备认领后自动写入" />
+            <input v-model.trim="editing.mac" class="input mt-1 w-full" placeholder="可留空，由管理员填写设备 MAC" />
           </div>
-          <div class="grid gap-2 sm:grid-cols-2">
-            <div>
-              <label class="label">固件</label>
-              <select v-model="editing.firmware" class="input mt-1 w-full">
-                <option value="unknown">unknown</option>
-                <option value="bios">bios</option>
-                <option value="uefi_ia32">uefi_ia32</option>
-                <option value="uefi_x64">uefi_x64</option>
-                <option value="uefi_arm32">uefi_arm32</option>
-                <option value="uefi_arm64">uefi_arm64</option>
-                <option value="ipxe">ipxe</option>
-              </select>
-            </div>
-            <div>
-              <label class="label">状态</label>
-              <select v-model="editing.status" class="input mt-1 w-full">
-                <option value="unknown">未知</option>
-                <option value="unassigned">待认领</option>
-                <option value="online">在线</option>
-                <option value="offline">离线</option>
-                <option value="pxe">PXE</option>
-                <option value="ipxe">iPXE</option>
-              </select>
-            </div>
+          <div class="rounded-md bg-neutral-50 p-3 text-xs text-neutral-600">
+            <p>最近观测 IP：{{ editing.observed_ip || '-' }}</p>
+            <p class="mt-1">固件：{{ editing.firmware }} · 状态：{{ statusText[editing.status] ?? editing.status }}</p>
+            <p class="mt-1">静态绑定只由管理员修改；观测信息由网络请求更新。</p>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <button class="btn btn-primary" :disabled="busy || !canSave" @click="saveClient">{{ busy ? '保存中...' : '保存' }}</button>
@@ -133,6 +113,7 @@ type Client = {
   seq: number
   name: string
   ip: string
+  observed_ip: string
   mac: string
   firmware: string
   status: string
@@ -151,14 +132,14 @@ const batchCount = ref(10)
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
-const statusText: Record<string, string> = { unknown: '未知', unassigned: '待认领', online: '在线', offline: '离线', pxe: 'PXE', ipxe: 'iPXE' }
+const statusText: Record<string, string> = { unknown: '未知', unassigned: '待绑定', online: '在线', offline: '离线', pxe: 'PXE', ipxe: 'iPXE' }
 const ipPattern = /^$|^(\d{1,3}\.){3}\d{1,3}$/
 const macPattern = /^$|^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$/
 const canSave = computed(() => editing.name.trim().length > 0 && ipPattern.test(editing.ip) && macPattern.test(editing.mac))
 const canBatch = computed(() => batchPrefix.value.trim().length > 0 && ipPattern.test(batchIP.value) && batchCount.value >= 1 && batchCount.value <= 1000)
 
 function emptyClient(): Client {
-  return { id: 0, seq: 0, name: '', ip: '', mac: '', firmware: 'unknown', status: 'unknown', disk_health: '', net_speed: '', created_at: '', updated_at: '' }
+  return { id: 0, seq: 0, name: '', ip: '', observed_ip: '', mac: '', firmware: 'unknown', status: 'unknown', disk_health: '', net_speed: '', created_at: '', updated_at: '' }
 }
 
 async function load() {
@@ -220,7 +201,7 @@ async function reloadAndSelect(id: number) {
 
 async function batch() {
   if (!canBatch.value) return
-  if (!window.confirm(`确认批量创建 ${batchCount.value} 台待认领客户端？`)) return
+  if (!window.confirm(`确认批量创建 ${batchCount.value} 台待绑定客户端？`)) return
   await run(async () => {
     const rows = await api<Client[]>('/clients/batch', { method: 'POST', body: JSON.stringify({ prefix: batchPrefix.value, ip_start: batchIP.value, count: batchCount.value }) })
     message.value = `已创建 ${Array.isArray(rows) ? rows.length : 0} 台客户端。`

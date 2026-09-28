@@ -1,16 +1,16 @@
 package httpboot
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"pxe/internal/filetree"
 	"strings"
 	"time"
 
@@ -18,7 +18,7 @@ import (
 	"pxe/internal/storage"
 )
 
-func Run(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) {
+func Handler(settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/client/report", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -30,31 +30,20 @@ func Run(ctx context.Context, settings storage.ServiceSettings, store *storage.S
 			DiskHealth string `json:"disk_health"`
 			NetSpeed   string `json:"net_speed"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&report); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if report.IP == "" {
-			report.IP = clientIP(r)
+		report.IP = clientIP(r)
+		if err := store.UpdateClientHealth(r.Context(), report.IP, report.DiskHealth, report.NetSpeed); err != nil {
+			http.Error(w, "报告保存失败", 500)
+			return
 		}
-		_ = store.UpdateClientHealth(r.Context(), report.IP, report.DiskHealth, report.NetSpeed)
 		events.Publish("info", "clients", "收到客户端健康报告: "+report.IP)
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.Handle("/", fileHandler(settings, store, events))
-	server := &http.Server{Addr: settings.HTTPBoot.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-	events.Publish("info", "httpboot", "HTTP Boot 已启动: "+settings.HTTPBoot.Addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		events.Publish("error", "httpboot", "HTTP Boot 启动失败: "+err.Error())
-		slog.Error("httpboot failed", "error", err)
-	}
-	events.Publish("info", "httpboot", "HTTP Boot 已停止")
+	return mux
 }
 
 func fileHandler(settings storage.ServiceSettings, store *storage.Store, events *observability.Hub) http.Handler {
@@ -63,15 +52,26 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		root, target, err := resolveReadPath(settings, strings.TrimPrefix(r.URL.Path, "/"))
+		root, target, err := filetree.Resolve(settings.HTTPBoot.Root, settings.NetbootXYZ.DownloadDir, strings.TrimPrefix(r.URL.Path, "/"))
 		if err != nil {
 			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件路径非法: %s client=%s error=%s", r.URL.Path, clientIP(r), err.Error()))
 			http.Error(w, "非法路径", http.StatusForbidden)
 			return
 		}
-		rel, _ := filepath.Rel(root, target)
-		rel = filepath.ToSlash(rel)
-		info, err := os.Stat(target)
+		rel := filepath.ToSlash(target)
+		tree, err := os.OpenRoot(root)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer tree.Close()
+		f, err := tree.Open(target)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
 		if err != nil {
 			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件不存在: %s -> %s client=%s", r.URL.Path, target, clientIP(r)))
 			http.NotFound(w, r)
@@ -83,16 +83,13 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 				http.Error(w, "目录浏览已关闭", http.StatusForbidden)
 				return
 			}
-			serveDirectory(w, r, target, r.URL.Path)
+			if !strings.HasSuffix(r.URL.Path, "/") {
+				http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+				return
+			}
+			serveDirectory(w, r, f, r.URL.Path)
 			return
 		}
-		f, err := os.Open(target)
-		if err != nil {
-			events.Publish("error", "httpboot", fmt.Sprintf("HTTP 文件不可读: %s -> %s client=%s error=%s", r.URL.Path, target, clientIP(r), err.Error()))
-			http.Error(w, "文件不可读", http.StatusForbidden)
-			return
-		}
-		defer f.Close()
 		etag := fmt.Sprintf(`W/"%x-%x"`, info.ModTime().Unix(), info.Size())
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
@@ -112,18 +109,6 @@ func fileHandler(settings storage.ServiceSettings, store *storage.Store, events 
 			events.Publish("info", "httpboot", httpFileSentMessage(rel, r.Method, rec.status, rangeHeader, rec.written, info.Size(), time.Since(started), clientIP(r)))
 		}
 	})
-}
-
-func resolveReadPath(settings storage.ServiceSettings, requestPath string) (string, string, error) {
-	clean := strings.TrimLeft(strings.ReplaceAll(requestPath, "\\", "/"), "/")
-	if rel, ok := strings.CutPrefix(clean, "netboot/"); ok {
-		root, _ := filepath.Abs(settings.NetbootXYZ.DownloadDir)
-		target, err := safeJoin(root, rel)
-		return root, target, err
-	}
-	root, _ := filepath.Abs(settings.HTTPBoot.Root)
-	target, err := safeJoin(root, clean)
-	return root, target, err
 }
 
 type statusRecorder struct {
@@ -168,8 +153,8 @@ func (w noRangeResponseWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func serveDirectory(w http.ResponseWriter, r *http.Request, dir, requestPath string) {
-	entries, err := os.ReadDir(dir)
+func serveDirectory(w http.ResponseWriter, r *http.Request, dir *os.File, requestPath string) {
+	entries, err := dir.ReadDir(-1)
 	if err != nil {
 		http.Error(w, "目录不可读", http.StatusForbidden)
 		return
@@ -186,25 +171,9 @@ func serveDirectory(w http.ResponseWriter, r *http.Request, dir, requestPath str
 			href += "/"
 			name += "/"
 		}
-		_, _ = fmt.Fprintf(w, `<li><a href="%s">%s</a></li>`, href, name)
+		_, _ = fmt.Fprintf(w, `<li><a href="%s">%s</a></li>`, href, html.EscapeString(name))
 	}
 	_, _ = io.WriteString(w, "</ul></body>")
-}
-
-func safeJoin(root, request string) (string, error) {
-	clean := filepath.Clean(strings.ReplaceAll(request, "/", string(filepath.Separator)))
-	if clean == "." {
-		clean = ""
-	}
-	target := filepath.Join(root, clean)
-	abs, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	if abs != root && !strings.HasPrefix(abs, root+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes root")
-	}
-	return abs, nil
 }
 
 func clientIP(r *http.Request) string {

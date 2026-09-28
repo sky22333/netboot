@@ -75,6 +75,7 @@ type Client struct {
 	Seq        int64  `json:"seq"`
 	Name       string `json:"name"`
 	IP         string `json:"ip"`
+	ObservedIP string `json:"observed_ip"`
 	MAC        string `json:"mac"`
 	Firmware   string `json:"firmware"`
 	Status     string `json:"status"`

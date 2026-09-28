@@ -2,8 +2,10 @@ package netboot
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -26,16 +28,23 @@ type Result struct {
 }
 
 func Download(ctx context.Context, settings storage.NetbootXYZSettings, events *observability.Hub) []Result {
-	_ = os.MkdirAll(settings.DownloadDir, 0755)
+	if err := os.MkdirAll(settings.DownloadDir, 0755); err != nil {
+		return []Result{{Error: err.Error()}}
+	}
+	root, err := os.OpenRoot(settings.DownloadDir)
+	if err != nil {
+		return []Result{{Error: err.Error()}}
+	}
+	defer root.Close()
 	client := &http.Client{Timeout: 90 * time.Second}
 	results := []Result{}
 	for _, name := range settings.Files {
 		name = filepath.Base(name)
 		target := filepath.Join(settings.DownloadDir, name)
-		urls := netbootURLs(settings.BaseURL, name)
-		res := Result{File: name, URL: urls[0], TargetPath: target}
-		if info, err := os.Stat(target); err == nil && info.Size() > 0 {
-			if sum, err := sha256File(target); err == nil {
+		source := strings.TrimRight(settings.BaseURL, "/") + "/" + name
+		res := Result{File: name, URL: source, TargetPath: target}
+		if info, err := root.Stat(name); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+			if sum, err := sha256File(root, name); err == nil {
 				res.SHA256 = sum
 			}
 			res.OK = true
@@ -44,8 +53,8 @@ func Download(ctx context.Context, settings storage.NetbootXYZSettings, events *
 			results = append(results, res)
 			continue
 		}
-		events.Publish("info", "netboot.xyz", "开始下载 "+name)
-		resp, err := tryDownload(ctx, client, urls)
+		events.Publish("info", "netboot.xyz", "开始下载 "+res.URL+" -> "+target)
+		resp, err := tryDownload(ctx, client, source)
 		if err != nil {
 			res.Error = err.Error()
 			results = append(results, res)
@@ -58,29 +67,14 @@ func Download(ctx context.Context, settings storage.NetbootXYZSettings, events *
 			results = append(results, res)
 			continue
 		}
-		tmp := target + ".tmp"
-		f, err := os.Create(tmp)
-		if err != nil {
-			res.Error = err.Error()
-			_ = resp.Body.Close()
-			results = append(results, res)
-			continue
-		}
-		hash := sha256.New()
-		_, err = io.Copy(io.MultiWriter(f, hash), resp.Body)
+		sum, err := saveDownload(root, name, resp.Body)
 		_ = resp.Body.Close()
-		_ = f.Close()
 		if err != nil {
 			res.Error = err.Error()
 			results = append(results, res)
 			continue
 		}
-		if err := os.Rename(tmp, target); err != nil {
-			res.Error = err.Error()
-			results = append(results, res)
-			continue
-		}
-		res.SHA256 = hex.EncodeToString(hash.Sum(nil))
+		res.SHA256 = sum
 		res.OK = true
 		events.Publish("info", "netboot.xyz", "下载完成 "+name)
 		results = append(results, res)
@@ -88,8 +82,8 @@ func Download(ctx context.Context, settings storage.NetbootXYZSettings, events *
 	return results
 }
 
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
+func sha256File(root *os.Root, path string) (string, error) {
+	f, err := root.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -101,38 +95,39 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func tryDownload(ctx context.Context, client *http.Client, urls []string) (*http.Response, error) {
-	var last *http.Response
-	for _, rawURL := range urls {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode != http.StatusNotFound {
-			return resp, nil
-		}
-		_ = resp.Body.Close()
-		last = resp
+func tryDownload(ctx context.Context, client *http.Client, source string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	if err != nil {
+		return nil, err
 	}
-	return last, nil
+	return client.Do(req)
 }
 
-func netbootURLs(baseURL, name string) []string {
-	base := strings.TrimRight(baseURL, "/")
-	candidates := []string{base + "/" + name}
-	if base == "https://boot.netboot.xyz" {
-		candidates = append([]string{"https://boot.netboot.xyz/ipxe/" + name}, candidates...)
+// Unique temporary names avoid races between concurrent downloads. The final
+// file only becomes visible after the complete response has been written.
+func saveDownload(root *os.Root, name string, body io.Reader) (string, error) {
+	tmp := ".download-" + rand.Text()
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return "", err
 	}
-	found := false
-	for _, candidate := range candidates {
-		if candidate == "https://boot.netboot.xyz/ipxe/"+name {
-			found = true
-			break
-		}
+	defer func() { f.Close(); _ = root.Remove(tmp) }()
+	hash := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(body, (64<<20)+1))
+	if err != nil {
+		return "", err
 	}
-	if !found {
-		candidates = append(candidates, "https://boot.netboot.xyz/ipxe/"+name)
+	if n == 0 || n > 64<<20 {
+		return "", fmt.Errorf("固件必须为 1 字节至 64 MiB")
 	}
-	return candidates
+	if err = f.Sync(); err != nil {
+		return "", err
+	}
+	if err = f.Close(); err != nil {
+		return "", err
+	}
+	if err = root.Rename(tmp, name); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }

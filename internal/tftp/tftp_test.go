@@ -2,39 +2,16 @@ package tftp
 
 import (
 	"bytes"
+	"context"
+	"encoding/binary"
+	"net"
 	"path/filepath"
+	"pxe/internal/observability"
 	"testing"
+	"time"
 
 	"pxe/internal/storage"
 )
-
-func TestResolveReadPathKeepsRequestsInsideRoot(t *testing.T) {
-	settings := testSettings(t)
-	if _, err := resolveReadPath(settings, "../secret.efi"); err == nil {
-		t.Fatal("expected path traversal to be rejected")
-	}
-
-	got, err := resolveReadPath(settings, "boot/loader.efi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := filepath.Join(settings.TFTP.Root, "boot", "loader.efi")
-	if got != want {
-		t.Fatalf("resolveReadPath() = %q, want %q", got, want)
-	}
-}
-
-func TestResolveReadPathMapsNetbootPrefix(t *testing.T) {
-	settings := testSettings(t)
-	got, err := resolveReadPath(settings, "netboot/netboot.xyz.efi")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi")
-	if got != want {
-		t.Fatalf("resolveReadPath() = %q, want %q", got, want)
-	}
-}
 
 func TestBuildOACKPayload(t *testing.T) {
 	got := buildOACKPayload(map[string]string{"blksize": "900", "tsize": "0"}, 900, 12345)
@@ -51,5 +28,69 @@ func testSettings(t *testing.T) storage.ServiceSettings {
 		TFTP:       storage.TFTPSettings{Root: filepath.Join(dir, "tftp"), BlockSizeMax: 1428},
 		HTTPBoot:   storage.HTTPBootSettings{Addr: ":8080"},
 		NetbootXYZ: storage.NetbootXYZSettings{DownloadDir: filepath.Join(dir, "netboot")},
+	}
+}
+
+func TestStandardTransferEndsWithEmptyBlock(t *testing.T) {
+	client, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	cfg := testSettings(t)
+	cfg.TFTP.TimeoutSeconds = 1
+	cfg.TFTP.RetryCount = 2
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sendContent(ctx, cfg, observability.NewHub(), "kernel", client.LocalAddr(), nil, bytes.NewReader(make([]byte, 512)), 512)
+	}()
+	for i, want := range []int{516, 4} {
+		buf := make([]byte, 2048)
+		client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, remote, err := client.ReadFrom(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != want || binary.BigEndian.Uint16(buf[:2]) != opDATA || binary.BigEndian.Uint16(buf[2:4]) != uint16(i+1) {
+			t.Fatalf("packet %d: %x (%d)", i, buf[:n], n)
+		}
+		ack := []byte{0, opACK, 0, byte(i + 1)}
+		client.WriteTo(ack, remote)
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("transfer did not finish")
+	}
+}
+func TestTransferCancellationInterruptsAckWait(t *testing.T) {
+	client, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	cfg := testSettings(t)
+	cfg.TFTP.TimeoutSeconds = 60
+	cfg.TFTP.RetryCount = 20
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sendContent(ctx, cfg, observability.NewHub(), "kernel", client.LocalAddr(), nil, bytes.NewReader([]byte("x")), 1)
+	}()
+	buf := make([]byte, 1024)
+	client.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err = client.ReadFrom(buf); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation waited for transfer timeout")
 	}
 }
