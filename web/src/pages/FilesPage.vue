@@ -165,12 +165,8 @@
                 删除
               </button>
             </div>
-            <button class="btn w-full gap-2" :disabled="root !== 'http' || selected.dir" @click="makeTorrent">
-              <Share2 class="h-4 w-4" />
-              为 HTTP 文件制作种子
-            </button>
           </div>
-          <p v-else class="mt-4 text-sm text-neutral-500">选择文件后，可查看访问路径、在线编辑文本脚本、重命名、删除或制作种子。</p>
+          <p v-else class="mt-4 text-sm text-neutral-500">选择文件后，可查看访问路径、在线编辑文本脚本、重命名或删除。</p>
         </div>
 
         <p v-if="message" class="rounded-md border p-3 text-sm" :class="error ? 'border-red-200 bg-red-50 text-red-700' : 'border-neutral-200 bg-white text-neutral-600'">{{ message }}</p>
@@ -230,7 +226,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, Folder, FolderPlus, Globe2, HardDrive, Info, MoveRight, Pencil, RefreshCw, Save, Share2, Trash2, Upload, X } from 'lucide-vue-next'
+import { ChevronRight, Copy, CornerUpLeft, FilePlus2, FileText, Folder, FolderPlus, Globe2, HardDrive, Info, MoveRight, Pencil, RefreshCw, Save, Trash2, Upload, X } from 'lucide-vue-next'
 import { api, upload } from '../lib/api'
 import type { ServiceConfig } from '../lib/types'
 
@@ -253,7 +249,7 @@ type FileListResponse = {
 
 const roots = [
   { key: 'http' as RootKey, label: 'HTTP Boot', localPath: 'data/boot/http', icon: Globe2, description: '放 boot.ipxe、linux、initrd.gz、自动安装配置和大镜像，通过 HTTP Boot 服务访问。' },
-  { key: 'tftp' as RootKey, label: 'TFTP 启动', localPath: 'data/boot/tftp', icon: HardDrive, description: '放 undionly.kpxe、ipxe-x86_64.efi、ipxe-arm64.efi、local-vars.ipxe 等第一阶段或 TFTP 引导文件。' },
+  { key: 'tftp' as RootKey, label: 'TFTP 启动', localPath: 'data/boot/tftp', icon: HardDrive, description: '放 undionly.kpxe、ipxe-x86_64.efi、ipxe-arm64.efi 等第一阶段或 TFTP 引导文件。' },
   { key: 'netboot' as RootKey, label: 'netboot.xyz', localPath: 'data/boot/netboot', icon: FileText, description: '存放 netboot.xyz 官方启动文件，BIOS/UEFI 会按规则优先使用。' }
 ]
 
@@ -512,14 +508,6 @@ function closeEditorWindow() {
 async function focusEditor() {
   await nextTick()
   editorRef.value?.focus()
-}
-
-async function makeTorrent() {
-  if (!selected.value || root.value !== 'http') return
-  await run(async () => {
-    const res = await api<{ torrent_path: string }>('/files/torrent', { method: 'POST', body: JSON.stringify({ root: root.value, path: selectedFullPath.value }) })
-    await refreshCurrentDirectory('', `种子已创建：${res.torrent_path}`)
-  })
 }
 
 async function refreshCurrentDirectory(selectPath = '', nextMessage = '') {

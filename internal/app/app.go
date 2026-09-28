@@ -18,7 +18,6 @@ import (
 	"pxe/internal/smb"
 	"pxe/internal/storage"
 	"pxe/internal/tftp"
-	"pxe/internal/torrent"
 	"pxe/internal/web"
 )
 
@@ -111,7 +110,7 @@ func (a *App) Status() any {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	services := map[string]string{
-		"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "torrent": "stopped", "smb": "stopped",
+		"dhcp": "stopped", "proxy_dhcp_67": "stopped", "proxy_dhcp": "stopped", "tftp": "stopped", "httpboot": "stopped", "smb": "stopped",
 	}
 	for name, handle := range a.services {
 		select {
@@ -158,9 +157,6 @@ func (a *App) StartServices(ctx context.Context) error {
 	}
 	if settings.TFTP.Enabled {
 		a.start("tftp", func(ctx context.Context) { tftp.Run(ctx, settings, a.Store, a.Events) })
-	}
-	if settings.Torrent.Enabled {
-		a.start("torrent", func(ctx context.Context) { torrent.RunTracker(ctx, settings.Torrent.Addr, a.Events) })
 	}
 	if settings.DHCP.Enabled {
 		if settings.DHCP.Mode == "dhcp" && settings.DHCP.DetectConflicts {

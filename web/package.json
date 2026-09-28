@@ -13,7 +13,6 @@
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.6",
     "lucide-vue-next": "^1.0.0",
-    "pinia": "^3.0.4",
     "vite": "^8.0.10",
     "vue": "^3.5.33",
     "vue-router": "^5.0.6"
@@ -25,4 +24,3 @@
     "vue-tsc": "^3.2.7"
   }
 }
-

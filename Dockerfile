@@ -21,6 +21,6 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 COPY --from=build /pxe /usr/local/bin/pxe
 VOLUME ["/data"]
-EXPOSE 8088/tcp 80/tcp 67/udp 69/udp 4011/udp 6969/tcp
+EXPOSE 8088/tcp 80/tcp 67/udp 69/udp 4011/udp
 ENTRYPOINT ["pxe"]
 CMD ["--data-dir", "/data", "--host", "0.0.0.0", "--port", "8088", "--no-browser"]

@@ -4,7 +4,7 @@
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 class="text-lg font-semibold">服务配置</h1>
-          <p class="mt-1 text-sm text-neutral-500">配置 PXE 服务的网络、DHCP、TFTP、HTTP Boot、SMB 和 Tracker。</p>
+          <p class="mt-1 text-sm text-neutral-500">配置 PXE 服务的网络、DHCP、TFTP、HTTP Boot、SMB。</p>
         </div>
         <button class="btn btn-primary" :disabled="saving || !config" @click="save">{{ saving ? '保存中...' : '保存配置' }}</button>
       </div>
@@ -113,7 +113,7 @@
           <div class="grid gap-2 sm:grid-cols-2">
             <input v-model.trim="config.boot_files.uefi_arm32" class="input w-full" placeholder="UEFI ARM32，自备，可留空" />
           </div>
-          <p class="field-hint">netboot.xyz 文件存在时会按架构优先使用：BIOS 使用 kpxe/undionly，UEFI x64 使用 netboot.xyz.efi，UEFI ARM64 使用 netboot.xyz-arm64.efi。</p>
+          <p class="field-hint">按架构使用这里指定的 TFTP 文件。使用下载的 netboot.xyz 固件时填写 netboot/文件名；下载不会自动切换固件。通用 iPXE 的后续脚本为 HTTP Boot 根目录下的 boot.ipxe。</p>
         </div>
       </section>
 
@@ -133,13 +133,6 @@
         </div>
       </section>
 
-      <section class="card p-5">
-        <h2 class="font-semibold">BitTorrent Tracker</h2>
-        <div class="mt-4 space-y-3">
-          <label class="flex items-center gap-2 text-sm"><input v-model="config.torrent.enabled" class="switch" type="checkbox" /> 启用内置 Tracker</label>
-          <input v-model.trim="config.torrent.addr" class="input w-full" placeholder=":6969" />
-        </div>
-      </section>
     </div>
   </div>
 </template>

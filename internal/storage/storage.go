@@ -51,12 +51,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
-		`CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY, seq INTEGER NOT NULL, name TEXT NOT NULL, ip TEXT, mac TEXT, firmware TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL DEFAULT 'unknown', last_boot_file TEXT, disk_health TEXT, net_speed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY, seq INTEGER NOT NULL, name TEXT NOT NULL, ip TEXT, mac TEXT, firmware TEXT NOT NULL DEFAULT 'unknown', status TEXT NOT NULL DEFAULT 'unknown', disk_health TEXT, net_speed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_ip ON clients(ip) WHERE ip IS NOT NULL AND ip != '';`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_mac ON clients(mac) WHERE mac IS NOT NULL AND mac != '';`,
-		`CREATE TABLE IF NOT EXISTS boot_menus (id INTEGER PRIMARY KEY, menu_type TEXT UNIQUE NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, prompt TEXT NOT NULL, timeout_seconds INTEGER NOT NULL DEFAULT 6, randomize_timeout INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE IF NOT EXISTS boot_menu_items (id INTEGER PRIMARY KEY, menu_id INTEGER NOT NULL, sort_order INTEGER NOT NULL, title TEXT NOT NULL, boot_file TEXT, pxe_type TEXT, server_ip TEXT, enabled INTEGER NOT NULL DEFAULT 1, FOREIGN KEY(menu_id) REFERENCES boot_menus(id) ON DELETE CASCADE);`,
-		`CREATE TABLE IF NOT EXISTS client_actions (id INTEGER PRIMARY KEY, sort_order INTEGER NOT NULL, name TEXT NOT NULL, command TEXT NOT NULL, args TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, ts TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL, fields_json TEXT);`,
 	}
 	for _, stmt := range stmts {
@@ -75,11 +72,6 @@ func (s *Store) EnsureDefaults(ctx context.Context) error {
 	} else if err != nil {
 		return err
 	}
-	for _, menu := range s.defaultMenus() {
-		if err := s.ensureMenu(ctx, menu); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -93,9 +85,7 @@ func (s *Store) DefaultSettings() ServiceSettings {
 		HTTPBoot:   HTTPBootSettings{Enabled: true, Addr: ":80", Root: filepath.Join(s.dataDir, "boot", "http"), DirectoryListing: true, RangeRequests: true},
 		SMB:        SMBSettings{Enabled: false, Root: filepath.Join(s.dataDir, "smb"), ShareName: "pxe", Permissions: "read"},
 		BootFiles:  BootFilesSettings{BIOS: "undionly.kpxe", UEFIX64: "ipxe-x86_64.efi", UEFIARM64: "ipxe-arm64.efi"},
-		NetbootXYZ: NetbootXYZSettings{Enabled: true, DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
-		Torrent:    TorrentSettings{Enabled: false, Addr: ":6969"},
-		Security:   SecuritySettings{AdminAuthEnabled: true},
+		NetbootXYZ: NetbootXYZSettings{DownloadDir: filepath.Join(s.dataDir, "boot", "netboot"), BaseURL: "https://boot.netboot.xyz/ipxe", Files: []string{"netboot.xyz.kpxe", "netboot.xyz-undionly.kpxe", "netboot.xyz.efi", "netboot.xyz-arm64.efi"}},
 	}
 }
 
@@ -144,127 +134,10 @@ func (s *Store) GetSettings(ctx context.Context) (ServiceSettings, error) {
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
 		return ServiceSettings{}, err
 	}
-	s.restoreMissingSections(raw, &settings)
-	s.normalizeSettings(&settings)
 	return settings, nil
 }
 
-func (s *Store) restoreMissingSections(raw string, settings *ServiceSettings) {
-	var sections map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
-		return
-	}
-	defaults := s.DefaultSettings()
-	if _, ok := sections["boot_files"]; !ok {
-		settings.BootFiles = defaults.BootFiles
-	}
-	if _, ok := sections["netboot_xyz"]; !ok {
-		settings.NetbootXYZ = defaults.NetbootXYZ
-	}
-	if _, ok := sections["security"]; !ok {
-		settings.Security = defaults.Security
-	}
-}
-
-func (s *Store) normalizeSettings(settings *ServiceSettings) {
-	defaults := s.DefaultSettings()
-	if settings.Server.ListenIP == "" {
-		settings.Server.ListenIP = defaults.Server.ListenIP
-	}
-	if settings.Server.AdvertiseIP == "" {
-		settings.Server.AdvertiseIP = defaults.Server.AdvertiseIP
-	}
-	if settings.DHCP.Mode == "" {
-		settings.DHCP.Mode = defaults.DHCP.Mode
-	}
-	if settings.DHCP.NonPXEAction == "" {
-		settings.DHCP.NonPXEAction = defaults.DHCP.NonPXEAction
-	}
-	if settings.DHCP.PoolStart == "" {
-		settings.DHCP.PoolStart = defaults.DHCP.PoolStart
-	}
-	if settings.DHCP.PoolEnd == "" {
-		settings.DHCP.PoolEnd = defaults.DHCP.PoolEnd
-	}
-	if settings.DHCP.SubnetMask == "" {
-		settings.DHCP.SubnetMask = defaults.DHCP.SubnetMask
-	}
-	if settings.DHCP.Router == "" {
-		settings.DHCP.Router = defaults.DHCP.Router
-	}
-	if len(settings.DHCP.DNS) == 0 {
-		settings.DHCP.DNS = defaults.DHCP.DNS
-	}
-	if settings.DHCP.LeaseTimeSeconds == 0 {
-		settings.DHCP.LeaseTimeSeconds = defaults.DHCP.LeaseTimeSeconds
-	}
-	if settings.TFTP.Root == "" {
-		settings.TFTP.Root = defaults.TFTP.Root
-	}
-	if settings.TFTP.MaxTransfers == 0 {
-		settings.TFTP.MaxTransfers = defaults.TFTP.MaxTransfers
-	}
-	if settings.TFTP.BlockSizeMax == 0 {
-		settings.TFTP.BlockSizeMax = defaults.TFTP.BlockSizeMax
-	}
-	if settings.TFTP.RetryCount == 0 {
-		settings.TFTP.RetryCount = defaults.TFTP.RetryCount
-	}
-	if settings.TFTP.TimeoutSeconds == 0 {
-		settings.TFTP.TimeoutSeconds = defaults.TFTP.TimeoutSeconds
-	}
-	if settings.TFTP.MaxUploadBytes == 0 {
-		settings.TFTP.MaxUploadBytes = defaults.TFTP.MaxUploadBytes
-	}
-	if settings.HTTPBoot.Addr == "" {
-		settings.HTTPBoot.Addr = defaults.HTTPBoot.Addr
-	}
-	if settings.HTTPBoot.Root == "" {
-		settings.HTTPBoot.Root = defaults.HTTPBoot.Root
-	}
-	if settings.SMB.Root == "" {
-		settings.SMB.Root = defaults.SMB.Root
-	}
-	if settings.SMB.ShareName == "" {
-		settings.SMB.ShareName = defaults.SMB.ShareName
-	}
-	if settings.SMB.Permissions == "" {
-		settings.SMB.Permissions = defaults.SMB.Permissions
-	}
-	if settings.NetbootXYZ.DownloadDir == "" {
-		settings.NetbootXYZ.DownloadDir = defaults.NetbootXYZ.DownloadDir
-	}
-	if settings.NetbootXYZ.BaseURL == "" {
-		settings.NetbootXYZ.BaseURL = defaults.NetbootXYZ.BaseURL
-	}
-	if strings.TrimRight(settings.NetbootXYZ.BaseURL, "/") == "https://boot.netboot.xyz" {
-		settings.NetbootXYZ.BaseURL = defaults.NetbootXYZ.BaseURL
-	}
-	if len(settings.NetbootXYZ.Files) == 0 {
-		settings.NetbootXYZ.Files = defaults.NetbootXYZ.Files
-	}
-	if settings.Torrent.Addr == "" {
-		settings.Torrent.Addr = defaults.Torrent.Addr
-	}
-	if settings.BootFiles.BIOS == "" {
-		settings.BootFiles.BIOS = defaults.BootFiles.BIOS
-	}
-	if settings.BootFiles.UEFIIA32 == "" {
-		settings.BootFiles.UEFIIA32 = defaults.BootFiles.UEFIIA32
-	}
-	if settings.BootFiles.UEFIX64 == "" {
-		settings.BootFiles.UEFIX64 = defaults.BootFiles.UEFIX64
-	}
-	if settings.BootFiles.UEFIARM32 == "" {
-		settings.BootFiles.UEFIARM32 = defaults.BootFiles.UEFIARM32
-	}
-	if settings.BootFiles.UEFIARM64 == "" {
-		settings.BootFiles.UEFIARM64 = defaults.BootFiles.UEFIARM64
-	}
-}
-
 func (s *Store) SaveSettings(ctx context.Context, settings ServiceSettings) error {
-	s.normalizeSettings(&settings)
 	if err := ValidateSettings(settings); err != nil {
 		return err
 	}
@@ -360,7 +233,7 @@ func binaryBig(ip net.IP) uint32 {
 }
 
 func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(mac,''),firmware,status,COALESCE(last_boot_file,''),COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients ORDER BY seq DESC,id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(mac,''),firmware,status,COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients ORDER BY seq DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +241,7 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 	out := []Client{}
 	for rows.Next() {
 		var c Client
-		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.LastBootFile, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -378,8 +251,8 @@ func (s *Store) ListClients(ctx context.Context) ([]Client, error) {
 
 func (s *Store) GetClient(ctx context.Context, id int64) (Client, error) {
 	var c Client
-	err := s.db.QueryRowContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(mac,''),firmware,status,COALESCE(last_boot_file,''),COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients WHERE id=?`, id).
-		Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.LastBootFile, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(mac,''),firmware,status,COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients WHERE id=?`, id).
+		Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt)
 	return c, err
 }
 
@@ -421,7 +294,7 @@ func (s *Store) UpsertClient(ctx context.Context, c Client) (Client, error) {
 		c.Status = "unknown"
 	}
 	if c.ID == 0 {
-		res, err := s.db.ExecContext(ctx, `INSERT INTO clients(seq,name,ip,mac,firmware,status,last_boot_file,disk_health,net_speed,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, c.Seq, c.Name, nullEmpty(c.IP), nullEmpty(c.MAC), c.Firmware, c.Status, c.LastBootFile, c.DiskHealth, c.NetSpeed, now, now)
+		res, err := s.db.ExecContext(ctx, `INSERT INTO clients(seq,name,ip,mac,firmware,status,disk_health,net_speed,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, c.Seq, c.Name, nullEmpty(c.IP), nullEmpty(c.MAC), c.Firmware, c.Status, c.DiskHealth, c.NetSpeed, now, now)
 		if err != nil {
 			return Client{}, err
 		}
@@ -429,7 +302,7 @@ func (s *Store) UpsertClient(ctx context.Context, c Client) (Client, error) {
 		c.CreatedAt, c.UpdatedAt = now, now
 		return c, nil
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE clients SET seq=?,name=?,ip=?,mac=?,firmware=?,status=?,last_boot_file=?,disk_health=?,net_speed=?,updated_at=? WHERE id=?`, c.Seq, c.Name, nullEmpty(c.IP), nullEmpty(c.MAC), c.Firmware, c.Status, c.LastBootFile, c.DiskHealth, c.NetSpeed, now, c.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE clients SET seq=?,name=?,ip=?,mac=?,firmware=?,status=?,disk_health=?,net_speed=?,updated_at=? WHERE id=?`, c.Seq, c.Name, nullEmpty(c.IP), nullEmpty(c.MAC), c.Firmware, c.Status, c.DiskHealth, c.NetSpeed, now, c.ID)
 	c.UpdatedAt = now
 	return c, err
 }
@@ -466,44 +339,6 @@ func putBinary(ip net.IP, v uint32) {
 func (s *Store) ClearClientMAC(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE clients SET mac=NULL,status='unassigned',updated_at=? WHERE id=?`, Now(), id)
 	return err
-}
-
-func (s *Store) AssignMACToIP(ctx context.Context, ip, mac string) error {
-	mac = NormalizeMAC(mac)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE clients SET mac=NULL,status='unassigned',updated_at=? WHERE mac=?`, Now(), mac); err != nil {
-		return err
-	}
-	res, err := tx.ExecContext(ctx, `UPDATE clients SET mac=?,status='offline',updated_at=? WHERE ip=?`, mac, Now(), ip)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("未找到 IP 为 %s 的待分配客户端", ip)
-	}
-	return tx.Commit()
-}
-
-func (s *Store) UnassignedClients(ctx context.Context) ([]Client, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,seq,name,COALESCE(ip,''),COALESCE(mac,''),firmware,status,COALESCE(last_boot_file,''),COALESCE(disk_health,''),COALESCE(net_speed,''),created_at,updated_at FROM clients WHERE (mac IS NULL OR mac='') ORDER BY seq,id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Client{}
-	for rows.Next() {
-		var c Client
-		if err := rows.Scan(&c.ID, &c.Seq, &c.Name, &c.IP, &c.MAC, &c.Firmware, &c.Status, &c.LastBootFile, &c.DiskHealth, &c.NetSpeed, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }
 
 func (s *Store) UpdateClientHealth(ctx context.Context, ip string, diskHealth, netSpeed string) error {
@@ -551,58 +386,6 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		return fmt.Errorf("用户不存在")
 	}
 	return nil
-}
-
-func (s *Store) ListActions(ctx context.Context) ([]ClientAction, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,sort_order,name,command,args,enabled FROM client_actions ORDER BY sort_order,id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []ClientAction{}
-	for rows.Next() {
-		var a ClientAction
-		var enabled int
-		if err := rows.Scan(&a.ID, &a.SortOrder, &a.Name, &a.Command, &a.Args, &enabled); err != nil {
-			return nil, err
-		}
-		a.Enabled = enabled == 1
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) GetAction(ctx context.Context, id int64) (ClientAction, error) {
-	var a ClientAction
-	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT id,sort_order,name,command,args,enabled FROM client_actions WHERE id=?`, id).Scan(&a.ID, &a.SortOrder, &a.Name, &a.Command, &a.Args, &enabled)
-	a.Enabled = enabled == 1
-	return a, err
-}
-
-func (s *Store) SaveActions(ctx context.Context, actions []ClientAction) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM client_actions`); err != nil {
-		return err
-	}
-	for _, a := range actions {
-		a.Name = strings.TrimSpace(a.Name)
-		a.Command = strings.TrimSpace(a.Command)
-		if a.Name == "" {
-			return fmt.Errorf("操作名称不能为空")
-		}
-		if a.Command == "" {
-			return fmt.Errorf("操作命令不能为空")
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO client_actions(sort_order,name,command,args,enabled) VALUES(?,?,?,?,?)`, a.SortOrder, a.Name, a.Command, a.Args, boolInt(a.Enabled)); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func NormalizeMAC(mac string) string {

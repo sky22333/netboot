@@ -25,35 +25,6 @@ func TestProxyDiscoverReturnsOffer(t *testing.T) {
 	}
 }
 
-func TestSelectedMenuItemUsesConfiguredServerIP(t *testing.T) {
-	ctx := context.Background()
-	store, settings := testStoreAndSettings(t, ctx)
-	if err := store.SaveMenus(ctx, []storage.Menu{{
-		MenuType:       "uefi",
-		Enabled:        true,
-		Prompt:         "UEFI",
-		TimeoutSeconds: 6,
-		Items: []storage.MenuItem{
-			{SortOrder: 1, Title: "Custom TFTP", BootFile: "custom.efi", PXEType: "8002", ServerIP: "192.168.1.20", Enabled: true},
-		},
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	req := testPXEPacket(3,
-		testOpt(60, []byte("PXEClient")),
-		testOpt(93, []byte{0, 7}),
-		testOpt(43, []byte{71, 4, 0x80, 0x02, 0, 0}),
-	)
-
-	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, true, nil)
-	if got := net.IP(resp[20:24]).String(); got != "192.168.1.20" {
-		t.Fatalf("expected siaddr to use selected menu server, got %s", got)
-	}
-	if got := string(parseOptions(resp[240:])[66]); got != "192.168.1.20" {
-		t.Fatalf("expected option 66 to use selected menu server, got %q", got)
-	}
-}
-
 func TestIPXEClientSeenStatus(t *testing.T) {
 	ctx := context.Background()
 	store, settings := testStoreAndSettings(t, ctx)
@@ -76,7 +47,7 @@ func TestIPXEClientSeenStatus(t *testing.T) {
 	}
 }
 
-func TestCompleteDHCPUEFIDirectBootWhenNativeMenuDisabled(t *testing.T) {
+func TestCompleteDHCPUEFIDirectBoot(t *testing.T) {
 	ctx := context.Background()
 	store, settings := testStoreAndSettings(t, ctx)
 	settings.DHCP.Mode = "dhcp"
@@ -85,17 +56,6 @@ func TestCompleteDHCPUEFIDirectBootWhenNativeMenuDisabled(t *testing.T) {
 	settings.DHCP.Router = "192.168.1.1"
 	settings.DHCP.DNS = []string{"192.168.1.1"}
 	settings.BootFiles.UEFIX64 = "ipxe-x86_64.efi"
-	if err := store.SaveMenus(ctx, []storage.Menu{{
-		MenuType:       "uefi",
-		Enabled:        false,
-		Prompt:         "UEFI",
-		TimeoutSeconds: 6,
-		Items: []storage.MenuItem{
-			{SortOrder: 1, Title: "iPXE UEFI x64", BootFile: "ipxe-x86_64.efi", PXEType: "8002", ServerIP: "%tftpserver%", Enabled: true},
-		},
-	}}); err != nil {
-		t.Fatal(err)
-	}
 	req := testPXEPacket(1,
 		testOpt(60, []byte("PXEClient")),
 		testOpt(93, []byte{0, 7}),
@@ -206,7 +166,7 @@ func TestCompleteDHCPRequestForOtherServerIsIgnored(t *testing.T) {
 	}
 }
 
-func TestIPXEHTTPFeatureUsesDynamicMenuURL(t *testing.T) {
+func TestIPXEUsesBootScript(t *testing.T) {
 	ctx := context.Background()
 	store, settings := testStoreAndSettings(t, ctx)
 	settings.HTTPBoot.Addr = ":8080"
@@ -217,12 +177,12 @@ func TestIPXEHTTPFeatureUsesDynamicMenuURL(t *testing.T) {
 	)
 
 	resp := buildResponse(ctx, settings, store, observability.NewHub(), req, true, nil)
-	if got := string(parseOptions(resp[240:])[67]); got != "http://192.168.1.10:8080/dynamic.ipxe?bootfile=ipxemenu\x00" {
+	if got := string(parseOptions(resp[240:])[67]); got != "http://192.168.1.10:8080/boot.ipxe\x00" {
 		t.Fatalf("unexpected iPXE boot target %q", got)
 	}
 }
 
-func TestExecutableBootFileUsesArchitectureSpecificNetbootFiles(t *testing.T) {
+func TestDownloadedFilesDoNotOverrideConfiguredFirmware(t *testing.T) {
 	ctx := context.Background()
 	_, settings := testStoreAndSettings(t, ctx)
 	settings.NetbootXYZ.DownloadDir = t.TempDir()
@@ -231,9 +191,9 @@ func TestExecutableBootFileUsesArchitectureSpecificNetbootFiles(t *testing.T) {
 	mustWriteFile(t, filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.kpxe"))
 
 	cases := map[string]string{
-		"bios":       "netboot/netboot.xyz.kpxe",
-		"uefi_x64":   "netboot/netboot.xyz.efi",
-		"uefi_arm64": "netboot/netboot.xyz-arm64.efi",
+		"bios":       settings.BootFiles.BIOS,
+		"uefi_x64":   settings.BootFiles.UEFIX64,
+		"uefi_arm64": settings.BootFiles.UEFIARM64,
 		"uefi_ia32":  settings.BootFiles.UEFIIA32,
 		"uefi_arm32": settings.BootFiles.UEFIARM32,
 	}

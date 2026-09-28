@@ -1,7 +1,6 @@
 package tftp
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -16,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"pxe/internal/booturl"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
 )
@@ -122,11 +120,6 @@ func parseRequestOptions(parts []string) map[string]string {
 }
 
 func sendFile(ctx context.Context, settings storage.ServiceSettings, events *observability.Hub, name string, client net.Addr, options map[string]string) {
-	if script, ok := virtualIPXEScript(settings, name); ok {
-		events.Publish("info", "tftp", "虚拟 iPXE 脚本已就绪: "+name+" size="+strconv.Itoa(len(script))+" client="+client.String())
-		sendContent(ctx, settings, events, name, client, options, bytes.NewReader([]byte(script)), int64(len(script)))
-		return
-	}
 	path, err := resolveReadPath(settings, name)
 	if err != nil {
 		events.Publish("error", "tftp", "请求路径非法: "+name+" -> "+client.String()+" error="+err.Error())
@@ -206,35 +199,6 @@ func sendContent(ctx context.Context, settings storage.ServiceSettings, events *
 		}
 		block++
 	}
-}
-
-func virtualIPXEScript(settings storage.ServiceSettings, name string) (string, bool) {
-	clean := strings.ToLower(strings.TrimLeft(strings.ReplaceAll(name, "\\", "/"), "/"))
-	if clean != "boot.ipxe" && clean != "dynamic.ipxe" && clean != "ipxemenu.ipxe" {
-		return "", false
-	}
-	httpURI := booturl.HTTPBaseWithListenHost(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr)
-	server := settings.Server.AdvertiseIP
-	return fmt.Sprintf(`#!ipxe
-isset ${net0/ip} || dhcp || goto failed
-chain %s/dynamic.ipxe?bootfile=ipxemenu || goto tftp_fallback
-
-:tftp_fallback
-echo HTTP boot is unavailable, trying TFTP netboot.xyz
-iseq ${buildarch} arm64 && goto arm64_fallback
-iseq ${platform} efi && chain tftp://%s/netboot/netboot.xyz.efi || chain tftp://%s/netboot/netboot.xyz.kpxe || chain tftp://%s/netboot/netboot.xyz-undionly.kpxe || goto local
-
-:arm64_fallback
-chain tftp://%s/netboot/netboot.xyz-arm64.efi || goto local
-
-:local
-sanboot --no-describe --drive 0x80 || goto failed
-
-:failed
-echo PXE boot failed. Check HTTP/TFTP service, firewall and netboot.xyz files.
-sleep 5
-shell
-`, httpURI, server, server, server, server), true
 }
 
 func receiveFile(ctx context.Context, settings storage.ServiceSettings, store *storage.Store, events *observability.Hub, name string, client net.Addr, options map[string]string) {
@@ -481,20 +445,6 @@ func timeoutDuration(seconds int) time.Duration {
 		seconds = 3
 	}
 	return time.Duration(seconds) * time.Second
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func safeJoin(root, request string) (string, error) {

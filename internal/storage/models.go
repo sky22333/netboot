@@ -10,8 +10,6 @@ type ServiceSettings struct {
 	SMB        SMBSettings        `json:"smb"`
 	BootFiles  BootFilesSettings  `json:"boot_files"`
 	NetbootXYZ NetbootXYZSettings `json:"netboot_xyz"`
-	Torrent    TorrentSettings    `json:"torrent"`
-	Security   SecuritySettings   `json:"security"`
 }
 
 type ServerSettings struct {
@@ -67,34 +65,23 @@ type BootFilesSettings struct {
 }
 
 type NetbootXYZSettings struct {
-	Enabled     bool     `json:"enabled"`
 	DownloadDir string   `json:"download_dir"`
 	BaseURL     string   `json:"base_url"`
 	Files       []string `json:"files"`
 }
 
-type SecuritySettings struct {
-	AdminAuthEnabled bool `json:"admin_auth_enabled"`
-}
-
-type TorrentSettings struct {
-	Enabled bool   `json:"enabled"`
-	Addr    string `json:"addr"`
-}
-
 type Client struct {
-	ID           int64  `json:"id"`
-	Seq          int64  `json:"seq"`
-	Name         string `json:"name"`
-	IP           string `json:"ip"`
-	MAC          string `json:"mac"`
-	Firmware     string `json:"firmware"`
-	Status       string `json:"status"`
-	LastBootFile string `json:"last_boot_file"`
-	DiskHealth   string `json:"disk_health"`
-	NetSpeed     string `json:"net_speed"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID         int64  `json:"id"`
+	Seq        int64  `json:"seq"`
+	Name       string `json:"name"`
+	IP         string `json:"ip"`
+	MAC        string `json:"mac"`
+	Firmware   string `json:"firmware"`
+	Status     string `json:"status"`
+	DiskHealth string `json:"disk_health"`
+	NetSpeed   string `json:"net_speed"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type User struct {
@@ -104,36 +91,6 @@ type User struct {
 	Enabled   bool   `json:"enabled"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
-}
-
-type ClientAction struct {
-	ID        int64  `json:"id"`
-	SortOrder int    `json:"sort_order"`
-	Name      string `json:"name"`
-	Command   string `json:"command"`
-	Args      string `json:"args"`
-	Enabled   bool   `json:"enabled"`
-}
-
-type Menu struct {
-	ID               int64      `json:"id"`
-	MenuType         string     `json:"menu_type"`
-	Enabled          bool       `json:"enabled"`
-	Prompt           string     `json:"prompt"`
-	TimeoutSeconds   int        `json:"timeout_seconds"`
-	RandomizeTimeout bool       `json:"randomize_timeout"`
-	Items            []MenuItem `json:"items"`
-}
-
-type MenuItem struct {
-	ID        int64  `json:"id"`
-	MenuID    int64  `json:"menu_id"`
-	SortOrder int    `json:"sort_order"`
-	Title     string `json:"title"`
-	BootFile  string `json:"boot_file"`
-	PXEType   string `json:"pxe_type"`
-	ServerIP  string `json:"server_ip"`
-	Enabled   bool   `json:"enabled"`
 }
 
 type Event struct {

@@ -93,17 +93,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Activity, Files, Gauge, Github, HardDrive, ListTree, Menu, Network, ScrollText, Settings, TerminalSquare, Users, X } from 'lucide-vue-next'
+import { Activity, Files, Gauge, Github, HardDrive, Menu, Network, ScrollText, Settings, Users, X } from 'lucide-vue-next'
 import { api } from './lib/api'
 
 const nav = [
   { path: '/', name: '仪表盘', icon: Gauge },
   { path: '/config', name: '服务配置', icon: Settings },
   { path: '/clients', name: '客户端', icon: Network },
-  { path: '/menus', name: '启动菜单', icon: ListTree },
   { path: '/files', name: '文件管理', icon: Files },
   { path: '/netboot', name: 'netboot.xyz', icon: HardDrive },
-  { path: '/actions', name: '操作菜单', icon: TerminalSquare },
   { path: '/users', name: '用户', icon: Users },
   { path: '/logs', name: '日志', icon: ScrollText },
   { path: '/diagnostics', name: '系统诊断', icon: Activity }
@@ -136,7 +134,7 @@ async function checkAuth() {
     authMode.value = 'ready'
   } catch (e) {
     authError.value = e instanceof Error ? e.message : '无法连接到后端服务'
-    authMode.value = authError.value.includes('请先登录') ? 'login' : 'login'
+    authMode.value = 'login'
   }
 }
 

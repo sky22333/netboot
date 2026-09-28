@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"pxe/internal/ipxe"
 	"pxe/internal/observability"
 	"pxe/internal/storage"
 )
@@ -42,21 +41,8 @@ func Run(ctx context.Context, settings storage.ServiceSettings, store *storage.S
 		events.Publish("info", "clients", "收到客户端健康报告: "+report.IP)
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/dynamic.ipxe", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		params, _ := url.ParseQuery(r.URL.RawQuery)
-		gen := ipxe.Generator{Settings: settings, Store: store}
-		script := gen.Generate(r.Context(), ipxe.Request{Params: params, ClientIP: clientIP(r)})
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(script))
-	})
 	mux.Handle("/", fileHandler(settings, store, events))
-	server := &http.Server{Addr: settings.HTTPBoot.Addr, Handler: loggingHandler(mux, events), ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Addr: settings.HTTPBoot.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -227,13 +213,4 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
-}
-
-func loggingHandler(next http.Handler, events *observability.Hub) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/dynamic.ipxe") {
-			events.Publish("info", "httpboot", "生成动态 iPXE 脚本: "+r.URL.RawQuery)
-		}
-		next.ServeHTTP(w, r)
-	})
 }

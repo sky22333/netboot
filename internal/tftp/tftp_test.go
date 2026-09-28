@@ -3,7 +3,6 @@ package tftp
 import (
 	"bytes"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"pxe/internal/storage"
@@ -34,17 +33,6 @@ func TestResolveReadPathMapsNetbootPrefix(t *testing.T) {
 	want := filepath.Join(settings.NetbootXYZ.DownloadDir, "netboot.xyz.efi")
 	if got != want {
 		t.Fatalf("resolveReadPath() = %q, want %q", got, want)
-	}
-}
-
-func TestVirtualIPXEScriptOnlyForKnownNames(t *testing.T) {
-	settings := testSettings(t)
-	script, ok := virtualIPXEScript(settings, "boot.ipxe")
-	if !ok || !strings.Contains(script, "chain http://192.168.1.10:8080/dynamic.ipxe?bootfile=ipxemenu") {
-		t.Fatalf("expected virtual iPXE script, ok=%v script=%q", ok, script)
-	}
-	if _, ok := virtualIPXEScript(settings, "other.ipxe"); ok {
-		t.Fatal("expected arbitrary iPXE filename to use filesystem, not virtual script")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"runtime"
 
+	"pxe/internal/command"
 	"pxe/internal/storage"
 )
 
@@ -36,7 +37,7 @@ func Apply(settings storage.SMBSettings, start bool) error {
 	cmd := exec.Command("net", "share", settings.ShareName+"="+settings.Root, perm)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, string(out))
+		return fmt.Errorf("%w: %s", err, command.DecodeOutput(out))
 	}
 	return nil
 }

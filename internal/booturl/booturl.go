@@ -4,13 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
-
-	"pxe/internal/storage"
 )
-
-func HTTPBootBase(settings storage.ServiceSettings) string {
-	return HTTPBase(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr)
-}
 
 func HTTPBase(advertiseIP, listenAddr string) string {
 	host := strings.TrimSpace(advertiseIP)

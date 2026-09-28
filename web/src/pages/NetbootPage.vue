@@ -4,7 +4,7 @@
       <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div class="min-w-0">
           <h1 class="text-lg font-semibold">netboot.xyz</h1>
-          <p class="mt-1 text-sm text-neutral-500">下载 PXE 启动文件，并生成本地 iPXE 镜像菜单钩子。</p>
+          <p class="mt-1 text-sm text-neutral-500">下载启动固件，再到服务配置的启动文件中选择使用。</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button class="btn gap-2" :disabled="busy" @click="load">
@@ -50,21 +50,12 @@
               <div class="text-xs text-neutral-500">下载目录</div>
               <div class="mt-1 break-all font-medium">{{ info.download_dir }}</div>
             </div>
-            <div v-if="info.local_vars">
-              <div class="text-xs text-neutral-500">local-vars.ipxe</div>
-              <div class="mt-1 break-all font-medium">{{ info.local_vars.path }}</div>
-              <div class="mt-1 text-xs" :class="info.local_vars.exists ? 'text-green-700' : 'text-neutral-500'">{{ info.local_vars.exists ? '已存在' : '未生成' }}</div>
-            </div>
           </div>
         </section>
 
-        <section v-if="resultItems.length || localVarsResult" class="card p-4">
+        <section v-if="resultItems.length" class="card p-4">
           <h2 class="font-medium">任务结果</h2>
           <div class="mt-3 space-y-2">
-            <div v-if="localVarsResult" class="rounded-md border border-neutral-200 p-3 text-xs">
-              <div class="font-medium">local-vars.ipxe · {{ localVarsResult.error ? localVarsResult.error : (localVarsResult.created ? '已生成' : '已存在') }}</div>
-              <div class="mt-1 break-all text-neutral-500">{{ localVarsResult.path }}</div>
-            </div>
             <div v-for="r in resultItems" :key="r.file" class="rounded-md border border-neutral-200 p-3 text-xs">
               <div class="font-medium" :class="r.ok ? 'text-green-700' : 'text-red-700'">{{ r.file }} · {{ r.ok ? (r.existing ? '已存在' : '下载完成') : r.error }}</div>
               <div v-if="r.sha256" class="mt-1 break-all text-neutral-500">SHA256：{{ r.sha256 }}</div>
@@ -83,13 +74,11 @@ import { CheckCircle2, CircleDashed, Download, RefreshCw } from 'lucide-vue-next
 import { api } from '../lib/api'
 
 type LocalFile = { file: string; path: string; exists: boolean; size?: number; mod_time?: string }
-type NetbootInfo = { base_url: string; download_dir: string; files: string[]; local: LocalFile[]; local_vars?: LocalFile }
+type NetbootInfo = { base_url: string; download_dir: string; files: string[]; local: LocalFile[] }
 type DownloadResult = { file: string; ok: boolean; existing?: boolean; error?: string; sha256?: string; target_path: string }
-type LocalVarsResult = { path: string; created: boolean; error?: string }
 
 const info = ref<NetbootInfo | null>(null)
 const results = ref<DownloadResult[]>([])
-const localVarsResult = ref<LocalVarsResult | null>(null)
 const busy = ref(false)
 const message = ref('')
 const error = ref(false)
@@ -116,9 +105,8 @@ async function download() {
   busy.value = true
   error.value = false
   try {
-    const res = await api<{ downloads: DownloadResult[]; local_vars: LocalVarsResult }>('/netbootxyz/download', { method: 'POST' })
+    const res = await api<{ downloads: DownloadResult[] }>('/netbootxyz/download', { method: 'POST' })
     results.value = Array.isArray(res?.downloads) ? res.downloads : []
-    localVarsResult.value = res?.local_vars ?? null
     message.value = '下载任务已完成。'
     await load()
   } catch (e) {

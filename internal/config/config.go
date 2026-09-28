@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -18,8 +16,6 @@ type BootConfig struct {
 	Data     Data     `toml:"data"`
 	Admin    Admin    `toml:"admin"`
 	Database Database `toml:"database"`
-	Security Security `toml:"security"`
-	Logging  Logging  `toml:"logging"`
 }
 
 type Data struct {
@@ -34,22 +30,11 @@ type Database struct {
 	Path string `toml:"path"`
 }
 
-type Security struct {
-	SecretFile string `toml:"secret_file"`
-}
-
-type Logging struct {
-	Level  string `toml:"level"`
-	Format string `toml:"format"`
-}
-
 func Default() BootConfig {
 	return BootConfig{
 		Data:     Data{Dir: "./data"},
 		Admin:    Admin{AdminAddr: "127.0.0.1:8088"},
 		Database: Database{Path: "./data/pxe.db"},
-		Security: Security{SecretFile: "./data/secret.key"},
-		Logging:  Logging{Level: "info", Format: "text"},
 	}
 }
 
@@ -58,7 +43,6 @@ func LoadOrCreate(configPath, dataDir, host, port string) (BootConfig, error) {
 	if dataDir != "" {
 		cfg.Data.Dir = dataDir
 		cfg.Database.Path = filepath.Join(dataDir, "pxe.db")
-		cfg.Security.SecretFile = filepath.Join(dataDir, "secret.key")
 	}
 	if configPath == "" {
 		configPath = filepath.Join(cfg.Data.Dir, "pxe.toml")
@@ -110,7 +94,6 @@ func (c *BootConfig) Normalize() error {
 		return err
 	}
 	c.Database.Path = expandPath(c.Database.Path, c.Data.Dir)
-	c.Security.SecretFile = expandPath(c.Security.SecretFile, c.Data.Dir)
 	return nil
 }
 
@@ -132,9 +115,6 @@ func (c BootConfig) Validate() error {
 	if c.Database.Path == "" {
 		return errors.New("database.path 不能为空")
 	}
-	if c.Security.SecretFile == "" {
-		return errors.New("security.secret_file 不能为空")
-	}
 	if _, _, err := net.SplitHostPort(c.Admin.AdminAddr); err != nil {
 		return fmt.Errorf("admin.admin_addr 无效: %w", err)
 	}
@@ -145,7 +125,6 @@ func (c BootConfig) EnsureRuntime() error {
 	dirs := []string{
 		c.Data.Dir,
 		filepath.Dir(c.Database.Path),
-		filepath.Dir(c.Security.SecretFile),
 		filepath.Join(c.Data.Dir, "logs"),
 		filepath.Join(c.Data.Dir, "boot", "tftp"),
 		filepath.Join(c.Data.Dir, "boot", "http"),
@@ -155,15 +134,6 @@ func (c BootConfig) EnsureRuntime() error {
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(c.Security.SecretFile); errors.Is(err, os.ErrNotExist) {
-		buf := make([]byte, 32)
-		if _, err := rand.Read(buf); err != nil {
-			return err
-		}
-		if err := os.WriteFile(c.Security.SecretFile, []byte(hex.EncodeToString(buf)), 0600); err != nil {
 			return err
 		}
 	}

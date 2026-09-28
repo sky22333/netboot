@@ -11,9 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -21,17 +19,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"pxe/internal/booturl"
-	"pxe/internal/command"
 	"pxe/internal/config"
 	"pxe/internal/dhcp"
-	"pxe/internal/ipxe"
 	"pxe/internal/netboot"
 	"pxe/internal/netutil"
 	"pxe/internal/observability"
 	"pxe/internal/platform"
 	"pxe/internal/storage"
-	"pxe/internal/torrent"
 )
 
 //go:embed dist/*
@@ -84,12 +78,6 @@ func NewRouter(app Backend) http.Handler {
 	protected.DELETE("/clients/:id", h.deleteClient)
 	protected.POST("/clients/:id/wol", h.wol)
 	protected.POST("/clients/:id/clear-mac", h.clearClientMAC)
-	protected.GET("/menus", h.listMenus)
-	protected.PUT("/menus", h.saveMenus)
-	protected.GET("/actions", h.listActions)
-	protected.GET("/actions/templates", h.actionTemplates)
-	protected.PUT("/actions", h.saveActions)
-	protected.POST("/actions/:id/execute", h.executeAction)
 	protected.GET("/users", h.listUsers)
 	protected.POST("/users", h.createUserAPI)
 	protected.POST("/users/:id/password", h.changeUserPassword)
@@ -101,14 +89,11 @@ func NewRouter(app Backend) http.Handler {
 	protected.POST("/files/mkdir", h.mkdirFile)
 	protected.POST("/files/rename", h.renameFile)
 	protected.DELETE("/files", h.deleteFile)
-	protected.POST("/files/torrent", h.createTorrent)
 	protected.GET("/logs", h.logs)
 	protected.GET("/events/stream", h.eventStream)
 	protected.GET("/netbootxyz/files", h.netbootFiles)
 	protected.POST("/netbootxyz/download", h.netbootDownload)
 
-	r.GET("/dynamic.ipxe", h.dynamicProxy)
-	r.HEAD("/dynamic.ipxe", h.dynamicProxy)
 	r.NoRoute(staticHandler())
 	return r
 }
@@ -261,12 +246,6 @@ func (h *Handler) saveConfig(c *gin.Context) {
 		Fail(c, 400, "CONFIG_INVALID", "配置格式错误")
 		return
 	}
-	current, err := h.app.Storage().GetSettings(c.Request.Context())
-	if err != nil {
-		Fail(c, 500, "CONFIG_READ_FAILED", err.Error())
-		return
-	}
-	settings = preserveMissingConfigSections(raw, settings, current)
 	if err := h.app.Storage().SaveSettings(c.Request.Context(), settings); err != nil {
 		Fail(c, 400, "CONFIG_SAVE_FAILED", err.Error())
 		return
@@ -279,26 +258,6 @@ func (h *Handler) saveConfig(c *gin.Context) {
 	h.app.EventHub().Publish("info", "config", "服务配置已保存")
 	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "config", "服务配置已保存", nil)
 	OK(c, saved)
-}
-
-func preserveMissingConfigSections(raw []byte, settings, current storage.ServiceSettings) storage.ServiceSettings {
-	if len(raw) == 0 {
-		return settings
-	}
-	var sections map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &sections); err != nil {
-		return settings
-	}
-	if _, ok := sections["boot_files"]; !ok {
-		settings.BootFiles = current.BootFiles
-	}
-	if _, ok := sections["netboot_xyz"]; !ok {
-		settings.NetbootXYZ = current.NetbootXYZ
-	}
-	if _, ok := sections["security"]; !ok {
-		settings.Security = current.Security
-	}
-	return settings
 }
 
 func (h *Handler) startServices(c *gin.Context) {
@@ -431,134 +390,6 @@ func (h *Handler) wol(c *gin.Context) {
 	}
 	h.app.EventHub().Publish("info", "clients", fmt.Sprintf("已发送 WOL 唤醒包: %s targets=%d", client.MAC, result.Sent))
 	OK(c, gin.H{"message": "已发送唤醒包", "sent": result.Sent, "targets": result.Targets})
-}
-
-func (h *Handler) listMenus(c *gin.Context) {
-	menus, err := h.app.Storage().ListMenus(c.Request.Context())
-	if err != nil {
-		Fail(c, 500, "MENU_LIST_FAILED", err.Error())
-		return
-	}
-	OK(c, menus)
-}
-
-func (h *Handler) saveMenus(c *gin.Context) {
-	var menus []storage.Menu
-	if err := c.ShouldBindJSON(&menus); err != nil {
-		Fail(c, 400, "MENU_INVALID", "菜单格式错误")
-		return
-	}
-	if err := h.app.Storage().SaveMenus(c.Request.Context(), menus); err != nil {
-		Fail(c, 500, "MENU_SAVE_FAILED", err.Error())
-		return
-	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "menus", "启动菜单已保存", nil)
-	OK(c, menus)
-}
-
-func (h *Handler) listActions(c *gin.Context) {
-	actions, err := h.app.Storage().ListActions(c.Request.Context())
-	if err != nil {
-		Fail(c, 500, "ACTION_LIST_FAILED", err.Error())
-		return
-	}
-	OK(c, actions)
-}
-
-func (h *Handler) saveActions(c *gin.Context) {
-	var actions []storage.ClientAction
-	if err := c.ShouldBindJSON(&actions); err != nil {
-		Fail(c, 400, "ACTION_INVALID", "操作菜单格式错误")
-		return
-	}
-	if err := h.app.Storage().SaveActions(c.Request.Context(), actions); err != nil {
-		Fail(c, 500, "ACTION_SAVE_FAILED", err.Error())
-		return
-	}
-	saved, err := h.app.Storage().ListActions(c.Request.Context())
-	if err != nil {
-		Fail(c, 500, "ACTION_LIST_FAILED", err.Error())
-		return
-	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "info", "actions", "客户端操作菜单已保存", nil)
-	OK(c, saved)
-}
-
-func (h *Handler) actionTemplates(c *gin.Context) {
-	pingArgs := "-c 1 %IP%"
-	if runtime.GOOS == "windows" {
-		pingArgs = "-n 1 %IP%"
-	}
-	OK(c, []gin.H{
-		{"key": "ping", "label": "添加 Ping 模板", "name": "Ping Client", "command": "ping", "args": pingArgs},
-		{"key": "http", "label": "添加 HTTP 检查模板", "name": "Check HTTP", "command": "curl", "args": "-I http://%IP%/"},
-	})
-}
-
-func (h *Handler) executeAction(c *gin.Context) {
-	actionID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	var req struct {
-		ClientIDs []int64 `json:"client_ids"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || len(req.ClientIDs) == 0 {
-		Fail(c, 400, "ACTION_EXEC_INVALID", "请选择客户端")
-		return
-	}
-	action, err := h.app.Storage().GetAction(c.Request.Context(), actionID)
-	if err != nil || !action.Enabled {
-		Fail(c, 404, "ACTION_NOT_FOUND", "操作不存在或未启用")
-		return
-	}
-	results := make([]gin.H, 0, len(req.ClientIDs))
-	for _, id := range req.ClientIDs {
-		client, err := h.app.Storage().GetClient(c.Request.Context(), id)
-		if err != nil {
-			results = append(results, gin.H{"client_id": id, "ok": false, "error": "客户端不存在"})
-			continue
-		}
-		args := replaceActionVars(action.Args, client)
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
-		cmd := exec.CommandContext(ctx, action.Command, splitArgs(args)...)
-		out, err := cmd.CombinedOutput()
-		cancel()
-		item := gin.H{"client_id": id, "client": client.Name, "output": command.DecodeOutput(out), "ok": err == nil}
-		if err != nil {
-			item["error"] = err.Error()
-		}
-		results = append(results, item)
-	}
-	_ = h.app.Storage().AddEvent(c.Request.Context(), "warning", "actions", "执行客户端操作", gin.H{"action": action.Name, "count": len(req.ClientIDs)})
-	OK(c, results)
-}
-
-func replaceActionVars(args string, c storage.Client) string {
-	r := strings.NewReplacer("%IP%", c.IP, "%MAC%", c.MAC, "%NAME%", c.Name, "%STATUS%", c.Status, "%FIRMWARE%", c.Firmware, "%DISKHEALTH%", c.DiskHealth, "%NETSPEED%", c.NetSpeed)
-	return r.Replace(args)
-}
-
-func splitArgs(s string) []string {
-	var out []string
-	var cur strings.Builder
-	inQuote := false
-	for _, r := range s {
-		switch r {
-		case '"':
-			inQuote = !inQuote
-		case ' ', '\t':
-			if inQuote {
-				cur.WriteRune(r)
-			} else if cur.Len() > 0 {
-				out = append(out, cur.String())
-				cur.Reset()
-			}
-		default:
-			cur.WriteRune(r)
-		}
-	}
-	if cur.Len() > 0 {
-		out = append(out, cur.String())
-	}
-	return out
 }
 
 func (h *Handler) listUsers(c *gin.Context) {
@@ -837,44 +668,6 @@ func (h *Handler) saveFileContent(c *gin.Context) {
 	OK(c, gin.H{"path": req.Path, "size": len(req.Content)})
 }
 
-func (h *Handler) createTorrent(c *gin.Context) {
-	var req struct {
-		Path string `json:"path"`
-		Root string `json:"root"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Path == "" {
-		Fail(c, 400, "TORRENT_INVALID", "请选择要制作种子的文件")
-		return
-	}
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	if req.Root != "" && req.Root != "http" {
-		Fail(c, 400, "TORRENT_ROOT_INVALID", "只有 HTTP Boot 目录支持制作种子")
-		return
-	}
-	root := settings.HTTPBoot.Root
-	target, err := safeJoin(root, req.Path)
-	if err != nil {
-		Fail(c, 400, "PATH_INVALID", "路径无效")
-		return
-	}
-	rel, _ := filepath.Rel(root, target)
-	webSeed := booturl.HTTPBootBase(settings) + "/" + filepath.ToSlash(rel)
-	announce := "http://" + settings.Server.AdvertiseIP + ":6969/announce"
-	if settings.Torrent.Addr != "" {
-		if strings.HasPrefix(settings.Torrent.Addr, ":") {
-			announce = "http://" + settings.Server.AdvertiseIP + settings.Torrent.Addr + "/announce"
-		} else if _, p, err := net.SplitHostPort(settings.Torrent.Addr); err == nil {
-			announce = "http://" + settings.Server.AdvertiseIP + ":" + p + "/announce"
-		}
-	}
-	result, err := torrent.Create(target, announce, webSeed, 262144)
-	if err != nil {
-		Fail(c, 500, "TORRENT_FAILED", err.Error())
-		return
-	}
-	OK(c, result)
-}
-
 func (h *Handler) logs(c *gin.Context) {
 	limit := 500
 	if raw := c.Query("limit"); raw != "" {
@@ -935,40 +728,13 @@ func (h *Handler) netbootFiles(c *gin.Context) {
 		}
 		local = append(local, item)
 	}
-	localVarsPath := filepath.Join(settings.TFTP.Root, netboot.LocalVarsFile)
-	localVars := gin.H{"file": netboot.LocalVarsFile, "path": localVarsPath, "exists": false}
-	if info, err := os.Stat(localVarsPath); err == nil && !info.IsDir() {
-		localVars["exists"] = true
-		localVars["size"] = info.Size()
-		localVars["mod_time"] = info.ModTime()
-	}
-	OK(c, gin.H{"base_url": settings.NetbootXYZ.BaseURL, "files": settings.NetbootXYZ.Files, "download_dir": settings.NetbootXYZ.DownloadDir, "local": local, "local_vars": localVars})
+	OK(c, gin.H{"base_url": settings.NetbootXYZ.BaseURL, "files": settings.NetbootXYZ.Files, "download_dir": settings.NetbootXYZ.DownloadDir, "local": local})
 }
 
 func (h *Handler) netbootDownload(c *gin.Context) {
 	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
 	results := netboot.Download(c.Request.Context(), settings.NetbootXYZ, h.app.EventHub())
-	localVarsPath, created, err := netboot.EnsureLocalVars(settings.TFTP.Root, settings.Server.AdvertiseIP, settings.HTTPBoot.Addr, h.app.EventHub())
-	OK(c, gin.H{"downloads": results, "local_vars": gin.H{"file": netboot.LocalVarsFile, "path": localVarsPath, "created": created, "error": errorString(err)}})
-}
-
-func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-func (h *Handler) dynamicProxy(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	gen := ipxe.Generator{Settings: settings, Store: h.app.Storage()}
-	script := gen.Generate(c.Request.Context(), ipxe.Request{Params: c.Request.URL.Query(), ClientIP: c.ClientIP()})
-	c.Header("Content-Type", "text/plain; charset=utf-8")
-	if c.Request.Method == http.MethodHead {
-		c.Status(http.StatusOK)
-		return
-	}
-	c.String(http.StatusOK, script)
+	OK(c, gin.H{"downloads": results})
 }
 
 const maxEditableFileBytes = 1 << 20
@@ -1088,6 +854,15 @@ func wolTargets(client storage.Client, settings storage.ServiceSettings) []strin
 func staticHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		pages := map[string]bool{"/": true, "/config": true, "/clients": true, "/files": true, "/netboot": true, "/users": true, "/logs": true, "/diagnostics": true}
+		if !pages[path] && !strings.HasPrefix(path, "/assets/") {
+			c.Status(http.StatusNotFound)
+			return
+		}
 		target := "dist/index.html"
 		if path == "/" {
 			target = "dist/index.html"

@@ -114,11 +114,6 @@ func (s *SessionManager) Valid(token string) bool {
 }
 
 func (h *Handler) requireAuth(c *gin.Context) {
-	settings, _ := h.app.Storage().GetSettings(c.Request.Context())
-	if !settings.Security.AdminAuthEnabled {
-		c.Next()
-		return
-	}
 	token, err := c.Cookie("pxe_session")
 	if err == nil && h.sessions.Valid(token) {
 		c.Next()

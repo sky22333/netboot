@@ -136,7 +136,6 @@ type Client = {
   mac: string
   firmware: string
   status: string
-  last_boot_file: string
   disk_health: string
   net_speed: string
   created_at: string
@@ -159,7 +158,7 @@ const canSave = computed(() => editing.name.trim().length > 0 && ipPattern.test(
 const canBatch = computed(() => batchPrefix.value.trim().length > 0 && ipPattern.test(batchIP.value) && batchCount.value >= 1 && batchCount.value <= 1000)
 
 function emptyClient(): Client {
-  return { id: 0, seq: 0, name: '', ip: '', mac: '', firmware: 'unknown', status: 'unknown', last_boot_file: '', disk_health: '', net_speed: '', created_at: '', updated_at: '' }
+  return { id: 0, seq: 0, name: '', ip: '', mac: '', firmware: 'unknown', status: 'unknown', disk_health: '', net_speed: '', created_at: '', updated_at: '' }
 }
 
 async function load() {

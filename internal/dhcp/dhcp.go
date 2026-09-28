@@ -6,16 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"pxe/internal/booturl"
 	"pxe/internal/netutil"
 	"pxe/internal/observability"
-	"pxe/internal/pxeopt"
 	"pxe/internal/storage"
 )
 
@@ -401,27 +397,9 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 	events.Publish("info", "dhcp", fmt.Sprintf("客户端 %s 请求启动信息: msg=%d arch=%s vendor=%q user=%q ipxe=%v proxy=%v", mac, msgType, arch, vendorClass, userClass, isIPXE, proxy))
 
 	if isIPXE {
-		boot := ipxeBootFile(settings, arch, opts)
+		boot := ipxeBootFile(settings)
 		events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应 iPXE 启动目标: %s", mac, boot))
 		return offerBootFile(req, settings, clientIP, boot, nil, proxy)
-	}
-	if isUEFIArch(arch) {
-		menus, _ := store.ListMenus(ctx)
-		menu := findMenu(menus, "uefi")
-		selected, hasSelection := pxeopt.SelectedType(opts[43])
-		if hasSelection {
-			for _, item := range menu.Items {
-				if parseHex(item.PXEType) == selected {
-					events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应菜单选择 %04x: %s", mac, selected, item.BootFile))
-					return offerBootFileWithServer(req, settings, clientIP, item.BootFile, nil, proxy, item.ServerIP)
-				}
-			}
-		}
-		if menu.Enabled && !proxy {
-			opt43 := pxeopt.BuildOption43(menu, settings.Server.AdvertiseIP)
-			events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原生 PXE 菜单: %s", mac, menu.MenuType))
-			return offerBootFile(req, settings, clientIP, "", opt43, proxy)
-		}
 	}
 	boot := executableBootFile(settings, arch)
 	events.Publish("info", "dhcp", fmt.Sprintf("向 %s 响应原始 PXE 可执行启动文件: %s", mac, boot))
@@ -429,93 +407,41 @@ func buildResponse(ctx context.Context, settings storage.ServiceSettings, store 
 }
 
 func executableBootFile(settings storage.ServiceSettings, arch string) string {
-	for _, candidate := range bootFileCandidates(settings, arch) {
-		if candidate.NetbootName != "" {
-			if netbootExists(settings, candidate.NetbootName) {
-				return "netboot/" + candidate.NetbootName
-			}
-			continue
-		}
-		if candidate.File != "" {
-			return candidate.File
-		}
-	}
-	return ""
-}
-
-type bootFileCandidate struct {
-	NetbootName string
-	File        string
-}
-
-func bootFileCandidates(settings storage.ServiceSettings, arch string) []bootFileCandidate {
 	switch arch {
 	case "uefi_ia32":
-		return []bootFileCandidate{{File: settings.BootFiles.UEFIIA32}}
+		return settings.BootFiles.UEFIIA32
 	case "uefi_x64":
-		return []bootFileCandidate{{NetbootName: "netboot.xyz.efi"}, {File: settings.BootFiles.UEFIX64}}
+		return settings.BootFiles.UEFIX64
 	case "uefi_arm32":
-		return []bootFileCandidate{{File: settings.BootFiles.UEFIARM32}}
+		return settings.BootFiles.UEFIARM32
 	case "uefi_arm64":
-		return []bootFileCandidate{{NetbootName: "netboot.xyz-arm64.efi"}, {File: settings.BootFiles.UEFIARM64}}
+		return settings.BootFiles.UEFIARM64
 	default:
-		return []bootFileCandidate{{NetbootName: "netboot.xyz.kpxe"}, {NetbootName: "netboot.xyz-undionly.kpxe"}, {File: settings.BootFiles.BIOS}}
+		return settings.BootFiles.BIOS
 	}
 }
 
-func ipxeBootFile(settings storage.ServiceSettings, arch string, opts map[byte][]byte) string {
-	if ipxeHasFeature(opts, 0x13) {
-		return fmt.Sprintf("%s/dynamic.ipxe?bootfile=ipxemenu", booturl.HTTPBaseWithListenHost(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr))
+func ipxeBootFile(settings storage.ServiceSettings) string {
+	if !settings.HTTPBoot.Enabled {
+		return ""
 	}
-	return executableBootFile(settings, arch)
-}
-
-func netbootExists(settings storage.ServiceSettings, name string) bool {
-	if settings.NetbootXYZ.DownloadDir == "" {
-		return false
-	}
-	info, err := os.Stat(filepath.Join(settings.NetbootXYZ.DownloadDir, name))
-	return err == nil && !info.IsDir()
-}
-
-func ipxeHasFeature(opts map[byte][]byte, feature byte) bool {
-	encap := parseOptions(opts[175])
-	v, ok := encap[feature]
-	if !ok {
-		return false
-	}
-	if len(v) == 0 {
-		return true
-	}
-	for _, b := range v {
-		if b != 0 {
-			return true
-		}
-	}
-	return false
+	return booturl.HTTPBaseWithListenHost(settings.Server.AdvertiseIP, settings.HTTPBoot.Addr) + "/boot.ipxe"
 }
 
 func offerBootFile(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy bool) []byte {
-	return offerBootFileWithServer(req, settings, yiaddr, bootFile, opt43, proxy, "")
-}
-
-func offerBootFileWithServer(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy bool, nextServer string) []byte {
-	return offerResponse(req, settings, yiaddr, bootFile, opt43, proxy, true, nextServer)
+	return offerResponse(req, settings, yiaddr, bootFile, opt43, proxy, true)
 }
 
 func offerNetworkConfig(req []byte, settings storage.ServiceSettings, yiaddr string) []byte {
-	return offerResponse(req, settings, yiaddr, "", nil, false, false, "")
+	return offerResponse(req, settings, yiaddr, "", nil, false, false)
 }
 
-func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy, includePXE bool, nextServer string) []byte {
+func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFile string, opt43 []byte, proxy, includePXE bool) []byte {
 	serverIP := net.ParseIP(settings.Server.AdvertiseIP).To4()
 	if serverIP == nil {
 		return nil
 	}
-	nextServerIP := resolveNextServerIP(settings, nextServer)
-	if nextServerIP == nil {
-		nextServerIP = serverIP
-	}
+	nextServerIP := serverIP
 	yi := net.ParseIP(yiaddr).To4()
 	if yi == nil {
 		yi = net.IPv4zero
@@ -585,14 +511,6 @@ func offerResponse(req []byte, settings storage.ServiceSettings, yiaddr, bootFil
 	}
 	resp = append(resp, 255)
 	return resp
-}
-
-func resolveNextServerIP(settings storage.ServiceSettings, value string) net.IP {
-	value = strings.TrimSpace(value)
-	if value == "" || value == "0.0.0.0" || stringContains(strings.ToLower(value), "%tftpserver%") {
-		value = settings.Server.AdvertiseIP
-	}
-	return net.ParseIP(value).To4()
 }
 
 func nak(req []byte, settings storage.ServiceSettings, message string) []byte {
@@ -677,10 +595,6 @@ func archName(v []byte) string {
 	}
 }
 
-func isUEFIArch(arch string) bool {
-	return arch == "uefi_ia32" || arch == "uefi_x64" || arch == "uefi_arm32" || arch == "uefi_arm64"
-}
-
 func isPXEClient(opts map[byte][]byte, vendorClass string, isIPXE bool) bool {
 	if isIPXE {
 		return true
@@ -699,31 +613,6 @@ func stringContains(s, needle string) bool {
 		}
 	}
 	return false
-}
-
-func findMenu(menus []storage.Menu, typ string) storage.Menu {
-	for _, menu := range menus {
-		if menu.MenuType == typ {
-			return menu
-		}
-	}
-	return storage.Menu{}
-}
-
-func parseHex(v string) uint16 {
-	var out uint16
-	for _, ch := range []byte(v) {
-		out <<= 4
-		switch {
-		case ch >= '0' && ch <= '9':
-			out += uint16(ch - '0')
-		case ch >= 'a' && ch <= 'f':
-			out += uint16(ch-'a') + 10
-		case ch >= 'A' && ch <= 'F':
-			out += uint16(ch-'A') + 10
-		}
-	}
-	return out
 }
 
 func DetectServers(ctx context.Context, listenIP string, timeout time.Duration, excludeIPs ...string) ([]string, error) {
