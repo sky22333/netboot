@@ -23,7 +23,7 @@ jobs:
       - name: 安装编译环境
         run: |
           sudo apt-get update -q
-          sudo apt-get install -yq build-essential liblzma-dev mtools mkisofs syslinux gcc-aarch64-linux-gnu wget tar
+          sudo apt-get install -yq build-essential liblzma-dev mtools mkisofs syslinux syslinux-common gcc-aarch64-linux-gnu wget tar
 
       - name: 下载并解压 iPXE 稳定版源码
         run: |
@@ -52,7 +52,7 @@ jobs:
       - name: 编译传统 BIOS (Legacy) 镜像
         working-directory: ipxe-2.0.0/src
         run: |
-          make bin/undionly.kpxe EMBED=embed.ipxe
+          make bin/undionly.kpxe bin/ipxe.lkrn EMBED=embed.ipxe
           cp bin/undionly.kpxe ../../undionly.kpxe
 
       - name: 编译现代 UEFI x86_64 (64位) 镜像
@@ -67,6 +67,18 @@ jobs:
           make CROSS_COMPILE=aarch64-linux-gnu- bin-arm64-efi/ipxe.efi EMBED=embed.ipxe
           cp bin-arm64-efi/ipxe.efi ../../ipxe-arm64.efi
 
+      - name: 生成 BIOS / UEFI x64 / ARM64 混合 USB 镜像
+        working-directory: ipxe-2.0.0/src
+        run: |
+          # 仅更新打包工具，保留现有固件源码版本；新版支持 MBR 分区表和 Debian 的 mbr.bin 路径。
+          wget https://raw.githubusercontent.com/ipxe/ipxe/6262f1081fe185564e8ec8365a1d23597ec6e6f5/src/util/genfsimg -O util/genfsimg-multiarch
+          echo 'a542a5a648eed35275ca9acf970802a307cab1237cfde51df01377f8b2ce4826  util/genfsimg-multiarch' | sha256sum --check
+          chmod +x util/genfsimg-multiarch
+          ./util/genfsimg-multiarch -o ../../ipxe.img \
+            bin/ipxe.lkrn \
+            bin-x86_64-efi/ipxe.efi \
+            bin-arm64-efi/ipxe.efi
+
       - name: 保存构建产物
         uses: actions/upload-artifact@v7
         with:
@@ -75,6 +87,7 @@ jobs:
             undionly.kpxe
             ipxe-x86_64.efi
             ipxe-arm64.efi
+            ipxe.img
           retention-days: 3
 
       - name: 自动发布到 GitHub Releases
@@ -86,3 +99,4 @@ jobs:
             undionly.kpxe
             ipxe-x86_64.efi
             ipxe-arm64.efi
+            ipxe.img
